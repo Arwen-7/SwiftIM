@@ -4,15 +4,15 @@
 import PackageDescription
 
 let package = Package(
-    name: "IMSDK",
+    name: "SwiftIM",
     platforms: [
         .iOS(.v13),
         .macOS(.v10_15)
     ],
     products: [
         .library(
-            name: "IMSDK",
-            targets: ["IMSDK"]),
+            name: "SwiftIM",
+            targets: ["SwiftIM"]),
     ],
     dependencies: [
         // 网络
@@ -25,7 +25,7 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "IMSDK",
+            name: "SwiftIM",
             dependencies: [
                 .product(name: "Alamofire", package: "Alamofire"),
                 .product(name: "Starscream", package: "Starscream"),
@@ -35,8 +35,8 @@ let package = Package(
             path: "Sources/IMSDK"
         ),
         .testTarget(
-            name: "IMSDKTests",
-            dependencies: ["IMSDK"],
+            name: "SwiftIMTests",
+            dependencies: ["SwiftIM"],
             path: "Tests/IMSDKTests"
         ),
     ]
