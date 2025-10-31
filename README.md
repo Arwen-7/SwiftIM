@@ -73,13 +73,13 @@ Add SwiftIM to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/SwiftIM/SwiftIM-iOS.git", from: "1.0.0")
+    .package(url: "https://github.com/Arwen-7/SwiftIM.git", from: "1.0.0")
 ]
 ```
 
 Or add it in Xcode:
 1. File → Add Packages...
-2. Enter: `https://github.com/SwiftIM/SwiftIM-iOS.git`
+2. Enter: `https://github.com/Arwen-7/SwiftIM.git`
 3. Select version: `1.0.0`
 
 ### CocoaPods
@@ -374,8 +374,8 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for deta
 ## 💬 Community & Support
 
 - 📖 [Documentation](docs/)
-- 🐛 [Issue Tracker](https://github.com/SwiftIM/SwiftIM-iOS/issues)
-- 💡 [Feature Requests](https://github.com/SwiftIM/SwiftIM-iOS/discussions)
+- 🐛 [Issue Tracker](https://github.com/Arwen-7/SwiftIM/issues)
+- 💡 [Feature Requests](https://github.com/Arwen-7/SwiftIM/discussions)
 - 📧 Email: support@swiftim.io
 
 ---

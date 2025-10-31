@@ -14,10 +14,10 @@ Pod::Spec.new do |s|
     • Well documented (19,500+ lines)
                        DESC
 
-  s.homepage         = 'https://github.com/SwiftIM/SwiftIM-iOS'
+  s.homepage         = 'https://github.com/Arwen-7/SwiftIM'
   s.license          = { :type => 'MIT', :file => 'LICENSE' }
   s.author           = { 'SwiftIM Team' => 'support@swiftim.io' }
-  s.source           = { :git => 'https://github.com/SwiftIM/SwiftIM-iOS.git', :tag => s.version.to_s }
+  s.source           = { :git => 'https://github.com/Arwen-7/SwiftIM.git', :tag => s.version.to_s }
   
   s.ios.deployment_target = '13.0'
   s.swift_version = '5.9'

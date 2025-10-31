@@ -37,7 +37,7 @@
 
 #### 创建仓库
 ```bash
-# 在 GitHub 上创建新仓库：SwiftIM/SwiftIM-iOS
+# 在 GitHub 上创建新仓库：Arwen-7/SwiftIM
 # 不要初始化 README、.gitignore 或 LICENSE（我们已经有了）
 ```
 
@@ -64,7 +64,7 @@ git commit -m "feat: initial release of SwiftIM 1.0.0
 - 155+ unit tests"
 
 # 添加远程仓库
-git remote add origin https://github.com/SwiftIM/SwiftIM-iOS.git
+git remote add origin https://github.com/Arwen-7/SwiftIM.git
 
 # 推送到 main 分支
 git branch -M main
@@ -215,7 +215,7 @@ git push origin v1.0.0
 ```
 
 #### 在 GitHub 上创建 Release
-1. 前往 https://github.com/SwiftIM/SwiftIM-iOS/releases
+1. 前往 https://github.com/Arwen-7/SwiftIM/releases
 2. 点击 "Draft a new release"
 3. 选择 tag: `v1.0.0`
 4. Release title: `SwiftIM 1.0.0 - Initial Release`
@@ -274,8 +274,8 @@ pod trunk push SwiftIM.podspec
 #### Badges
 在 README 中添加更多 badges:
 ```markdown
-[![Build Status](https://github.com/SwiftIM/SwiftIM-iOS/workflows/Tests/badge.svg)]()
-[![Coverage](https://codecov.io/gh/SwiftIM/SwiftIM-iOS/branch/main/graph/badge.svg)]()
+[![Build Status](https://github.com/Arwen-7/SwiftIM/workflows/Tests/badge.svg)]()
+[![Coverage](https://codecov.io/gh/Arwen-7/SwiftIM/branch/main/graph/badge.svg)]()
 [![CocoaPods](https://img.shields.io/cocoapods/v/SwiftIM.svg)]()
 [![Swift Package Manager](https://img.shields.io/badge/SPM-compatible-brightgreen.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-green.svg)]()
@@ -328,7 +328,8 @@ pod trunk push SwiftIM.podspec
 
 开源前确认以下信息：
 
-- **GitHub Organization**: SwiftIM
+- **GitHub User/Organization**: Arwen-7
+- **Repository**: SwiftIM
 - **Email**: support@swiftim.io
 - **Website**: swiftim.io（可选）
 - **Twitter**: @SwiftIM_SDK（可选）

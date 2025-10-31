@@ -108,9 +108,9 @@ Background Dark: #000000
 - **文档**: `docs.swiftim.io`
 
 ### GitHub
-- **Organization**: `SwiftIM`
-- **仓库**: `SwiftIM/SwiftIM-iOS`
-- **URL**: https://github.com/SwiftIM/SwiftIM-iOS
+- **User/Organization**: `Arwen-7`
+- **仓库**: `Arwen-7/SwiftIM`
+- **URL**: https://github.com/Arwen-7/SwiftIM
 
 ### 社交媒体
 - **Twitter/X**: @SwiftIM_SDK

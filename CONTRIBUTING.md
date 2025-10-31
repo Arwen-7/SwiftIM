@@ -96,8 +96,8 @@ Documentation improvements are always welcome:
 
 ```bash
 # Clone the repository
-git clone https://github.com/SwiftIM/SwiftIM-iOS.git
-cd SwiftIM-iOS
+git clone https://github.com/Arwen-7/SwiftIM.git
+cd SwiftIM
 
 # Open in Xcode
 open Package.swift
@@ -134,8 +134,8 @@ SwiftIM-iOS/
 
 ```bash
 # Fork the repository on GitHub, then:
-git clone https://github.com/YOUR_USERNAME/SwiftIM-iOS.git
-cd SwiftIM-iOS
+git clone https://github.com/YOUR_USERNAME/SwiftIM.git
+cd SwiftIM
 
 # Create a feature branch
 git checkout -b feature/amazing-feature
@@ -401,7 +401,7 @@ Looking for a place to start? Check out issues labeled:
 
 ## 📞 Getting Help
 
-- 💬 Join our [Discussions](https://github.com/SwiftIM/SwiftIM-iOS/discussions)
+- 💬 Join our [Discussions](https://github.com/Arwen-7/SwiftIM/discussions)
 - 📧 Email: support@swiftim.io
 - 📖 Check the [Documentation](docs/)
 
@@ -410,7 +410,7 @@ Looking for a place to start? Check out issues labeled:
 ## 🏆 Recognition
 
 Contributors will be:
-- Listed in our [Contributors](https://github.com/SwiftIM/SwiftIM-iOS/graphs/contributors) page
+- Listed in our [Contributors](https://github.com/Arwen-7/SwiftIM/graphs/contributors) page
 - Mentioned in release notes (for significant contributions)
 - Invited to our contributor community
 

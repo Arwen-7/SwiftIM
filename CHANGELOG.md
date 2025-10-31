@@ -198,11 +198,11 @@ This is the first release, no migration needed!
 ## Support
 
 - 📖 [Documentation](docs/)
-- 🐛 [Issue Tracker](https://github.com/SwiftIM/SwiftIM-iOS/issues)
-- 💬 [Discussions](https://github.com/SwiftIM/SwiftIM-iOS/discussions)
+- 🐛 [Issue Tracker](https://github.com/Arwen-7/SwiftIM/issues)
+- 💬 [Discussions](https://github.com/Arwen-7/SwiftIM/discussions)
 - 📧 Email: support@swiftim.io
 
 ---
 
-[Unreleased]: https://github.com/SwiftIM/SwiftIM-iOS/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/SwiftIM/SwiftIM-iOS/releases/tag/v1.0.0
+[Unreleased]: https://github.com/Arwen-7/SwiftIM/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/Arwen-7/SwiftIM/releases/tag/v1.0.0
