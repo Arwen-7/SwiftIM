@@ -404,7 +404,7 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for deta
 
 ## ⭐️ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=SwiftIM/SwiftIM-iOS&type=Date)](https://star-history.com/#SwiftIM/SwiftIM-iOS&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=Arwen-7/SwiftIM&type=Date)](https://star-history.com/#Arwen-7/SwiftIM&Date)
 
 ---
 
