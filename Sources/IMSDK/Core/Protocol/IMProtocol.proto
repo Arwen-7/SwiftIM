@@ -1,0 +1,297 @@
+// IMProtocol.proto
+// 自定义 IM 协议定义（使用 Protocol Buffers）
+// 编译命令：protoc --swift_out=. IMProtocol.proto
+
+syntax = "proto3";
+
+package im.protocol;
+
+// ============================================
+// 协议包格式（不使用 Protobuf，使用原始二进制）
+// ============================================
+//
+// 包头（固定 16 字节）:
+// +--------+--------+--------+--------+--------+--------+--------+--------+
+// | Magic  | Ver    | CmdID  | Seq    | BodyLen          | Reserved        |
+// | 2 byte | 1 byte | 2 byte | 4 byte | 4 byte           | 3 byte          |
+// +--------+--------+--------+--------+--------+--------+--------+--------+
+//
+// Magic:    协议魔数 0xEF89（用于识别合法包）
+// Ver:      协议版本（当前为 1）
+// CmdID:    命令类型（见 CommandType）
+// Seq:      序列号（用于请求-响应匹配、去重、排序）
+// BodyLen:  包体长度（字节数）
+// Reserved: 保留字段（未来扩展）
+//
+// 包体（变长）:
+// 使用 Protobuf 序列化的具体消息内容
+//
+// ============================================
+
+// 命令类型
+enum CommandType {
+    CMD_UNKNOWN = 0;
+    
+    // 连接相关（1-99）
+    CMD_CONNECT_REQ = 1;         // 连接请求
+    CMD_CONNECT_RSP = 2;         // 连接响应
+    CMD_DISCONNECT_REQ = 3;      // 断开请求
+    CMD_DISCONNECT_RSP = 4;      // 断开响应
+    CMD_HEARTBEAT_REQ = 5;       // 心跳请求
+    CMD_HEARTBEAT_RSP = 6;       // 心跳响应
+    
+    // 认证相关（100-199）
+    CMD_AUTH_REQ = 100;          // 认证请求
+    CMD_AUTH_RSP = 101;          // 认证响应
+    CMD_REAUTH_REQ = 102;        // 重新认证请求
+    CMD_REAUTH_RSP = 103;        // 重新认证响应
+    CMD_KICK_OUT = 104;          // 踢出通知
+    
+    // 消息相关（200-299）
+    CMD_SEND_MSG_REQ = 200;      // 发送消息请求
+    CMD_SEND_MSG_RSP = 201;      // 发送消息响应
+    CMD_PUSH_MSG = 202;          // 推送消息（服务器 → 客户端）
+    CMD_MSG_ACK = 203;           // 消息 ACK
+    CMD_BATCH_MSG = 204;         // 批量消息
+    CMD_REVOKE_MSG_REQ = 205;    // 撤回消息请求
+    CMD_REVOKE_MSG_RSP = 206;    // 撤回消息响应
+    CMD_REVOKE_MSG_PUSH = 207;   // 撤回消息推送
+    
+    // 同步相关（300-399）
+    CMD_SYNC_REQ = 300;          // 增量同步请求
+    CMD_SYNC_RSP = 301;          // 增量同步响应
+    CMD_SYNC_FINISHED = 302;     // 同步完成通知
+    
+    // 在线状态（400-499）
+    CMD_ONLINE_STATUS_REQ = 400; // 查询在线状态请求
+    CMD_ONLINE_STATUS_RSP = 401; // 在线状态响应
+    CMD_STATUS_CHANGE_PUSH = 402;// 状态变化推送
+    
+    // 已读回执（500-599）
+    CMD_READ_RECEIPT_REQ = 500;  // 已读回执请求
+    CMD_READ_RECEIPT_RSP = 501;  // 已读回执响应
+    CMD_READ_RECEIPT_PUSH = 502; // 已读回执推送
+    
+    // 输入状态（600-699）
+    CMD_TYPING_STATUS_REQ = 600; // 输入状态请求
+    CMD_TYPING_STATUS_PUSH = 601;// 输入状态推送
+}
+
+// 错误码
+enum ErrorCode {
+    ERR_SUCCESS = 0;             // 成功
+    ERR_UNKNOWN = 1;             // 未知错误
+    ERR_INVALID_PARAM = 2;       // 参数错误
+    ERR_AUTH_FAILED = 100;       // 认证失败
+    ERR_TOKEN_EXPIRED = 101;     // Token 过期
+    ERR_PERMISSION_DENIED = 102; // 权限不足
+    ERR_USER_NOT_EXIST = 103;    // 用户不存在
+    ERR_MESSAGE_TOO_LARGE = 200; // 消息过大
+    ERR_SEND_TOO_FAST = 201;     // 发送过快
+    ERR_CONVERSATION_NOT_EXIST = 202; // 会话不存在
+}
+
+// ============================================
+// 连接相关消息
+// ============================================
+
+// 连接请求
+message ConnectRequest {
+    string client_id = 1;        // 客户端 ID
+    string platform = 2;         // 平台（iOS/Android/Web）
+    string app_version = 3;      // App 版本
+    string sdk_version = 4;      // SDK 版本
+    string device_info = 5;      // 设备信息
+    map<string, string> extra = 10; // 扩展字段
+}
+
+// 连接响应
+message ConnectResponse {
+    ErrorCode error_code = 1;
+    string error_msg = 2;
+    int64 server_time = 3;       // 服务器时间（毫秒）
+    string session_id = 4;       // 会话 ID
+}
+
+// 心跳请求
+message HeartbeatRequest {
+    int64 client_time = 1;       // 客户端时间（毫秒）
+}
+
+// 心跳响应
+message HeartbeatResponse {
+    int64 server_time = 1;       // 服务器时间（毫秒）
+}
+
+// ============================================
+// 认证相关消息
+// ============================================
+
+// 认证请求
+message AuthRequest {
+    string user_id = 1;
+    string token = 2;
+    string platform = 3;
+}
+
+// 认证响应
+message AuthResponse {
+    ErrorCode error_code = 1;
+    string error_msg = 2;
+    int64 max_seq = 3;           // 当前最大序列号（用于增量同步）
+}
+
+// 踢出通知
+message KickOutNotification {
+    int32 reason = 1;            // 踢出原因（1: 其他设备登录，2: 账号异常等）
+    string message = 2;
+}
+
+// ============================================
+// 消息相关
+// ============================================
+
+// 发送消息请求
+message SendMessageRequest {
+    string client_msg_id = 1;    // 客户端消息 ID
+    string conversation_id = 2;  // 会话 ID
+    string sender_id = 3;        // 发送者 ID
+    string receiver_id = 4;      // 接收者 ID（单聊）
+    string group_id = 5;         // 群组 ID（群聊）
+    int32 message_type = 6;      // 消息类型
+    bytes content = 7;           // 消息内容（JSON 字节）
+    int64 send_time = 8;         // 发送时间
+    map<string, string> extra = 10;
+}
+
+// 发送消息响应
+message SendMessageResponse {
+    ErrorCode error_code = 1;
+    string error_msg = 2;
+    string message_id = 3;       // 服务器消息 ID
+    int64 seq = 4;               // 消息序列号
+    int64 server_time = 5;       // 服务器时间
+}
+
+// 推送消息
+message PushMessage {
+    string message_id = 1;
+    string client_msg_id = 2;
+    string conversation_id = 3;
+    string sender_id = 4;
+    string receiver_id = 5;
+    string group_id = 6;
+    int32 message_type = 7;
+    bytes content = 8;
+    int64 send_time = 9;
+    int64 server_time = 10;
+    int64 seq = 11;
+    map<string, string> extra = 15;
+}
+
+// 消息 ACK
+message MessageAck {
+    string message_id = 1;
+    int64 seq = 2;
+}
+
+// 批量消息
+message BatchMessages {
+    repeated PushMessage messages = 1;
+}
+
+// 撤回消息请求
+message RevokeMessageRequest {
+    string message_id = 1;
+    string conversation_id = 2;
+}
+
+// 撤回消息响应
+message RevokeMessageResponse {
+    ErrorCode error_code = 1;
+    string error_msg = 2;
+}
+
+// 撤回消息推送
+message RevokeMessagePush {
+    string message_id = 1;
+    string conversation_id = 2;
+    string revoked_by = 3;
+    int64 revoked_time = 4;
+}
+
+// ============================================
+// 同步相关
+// ============================================
+
+// 增量同步请求
+message SyncRequest {
+    int64 min_seq = 1;           // 客户端当前最小 seq
+    int64 max_seq = 2;           // 客户端当前最大 seq
+    int32 limit = 3;             // 每次拉取数量
+}
+
+// 增量同步响应
+message SyncResponse {
+    ErrorCode error_code = 1;
+    string error_msg = 2;
+    repeated PushMessage messages = 3;
+    int64 server_max_seq = 4;    // 服务器当前最大 seq
+    bool has_more = 5;           // 是否还有更多消息
+}
+
+// ============================================
+// 已读回执
+// ============================================
+
+// 已读回执请求
+message ReadReceiptRequest {
+    repeated string message_ids = 1;
+    string conversation_id = 2;
+}
+
+// 已读回执响应
+message ReadReceiptResponse {
+    ErrorCode error_code = 1;
+    string error_msg = 2;
+}
+
+// 已读回执推送
+message ReadReceiptPush {
+    repeated string message_ids = 1;
+    string conversation_id = 2;
+    string user_id = 3;
+    int64 read_time = 4;
+}
+
+// ============================================
+// 输入状态
+// ============================================
+
+// 输入状态请求
+message TypingStatusRequest {
+    string conversation_id = 1;
+    int32 status = 2;            // 0: 停止输入，1: 正在输入
+}
+
+// 输入状态推送
+message TypingStatusPush {
+    string conversation_id = 1;
+    string user_id = 2;
+    int32 status = 3;
+}
+
+// ============================================
+// WebSocket 专用消息封装
+// ============================================
+//
+// WebSocket 传输使用此通用消息格式（不使用 IMPacket header）
+// WebSocket 自带消息边界和校验，无需额外的 length 和 CRC
+//
+message WebSocketMessage {
+    CommandType command = 1;     // 命令类型
+    uint32 sequence = 2;         // 序列号
+    bytes body = 3;              // 消息体（具体消息的 Protobuf 序列化）
+    int64 timestamp = 4;         // 时间戳（毫秒）
+}
+
