@@ -10,6 +10,7 @@
 //
 
 import Foundation
+import Alamofire
 
 // MARK: - 消息丢失检测配置
 public struct IMMessageLossConfig {
@@ -316,54 +317,89 @@ extension IMMessageSyncManager {
             params["conversation_id"] = conversationID
         }
         
-        // 调用 HTTP 接口
-        httpManager.request(
+        // 创建请求对象
+        struct SyncRangeRequest: IMRequest {
+            let path: String
+            let method: HTTPMethod
+            let parameters: [String: Any]?
+            let headers: HTTPHeaders?
+        }
+        
+        let request = SyncRangeRequest(
             path: "/messages/sync_range",
             method: .post,
-            parameters: params
-        ) { [weak self] result in
+            parameters: params,
+            headers: nil
+        )
+        
+        // 定义响应数据结构
+        struct SyncRangeData: Codable {
+            struct MessageItem: Codable {
+                let messageID: String?
+                let conversationID: String?
+                let senderID: String?
+                let seq: Int64?
+                let messageType: Int?
+                let content: String?
+                let createTime: Int64?
+                let serverTime: Int64?
+                let status: Int?
+            }
+            
+            let messages: [MessageItem]
+        }
+        
+        // 发送请求
+        httpManager.request(request, responseType: SyncRangeData.self) { [weak self] result in
             guard let self = self else { return }
             
             switch result {
-            case .success(let data):
-                do {
-                    // 解析响应
-                    guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                          let messagesData = json["messages"] as? [[String: Any]] else {
-                        completion(.failure(.invalidData("Invalid response format")))
-                        return
-                    }
-                    
-                    // 解码消息
-                    var messages: [IMMessage] = []
-                    for msgDict in messagesData {
-                        if let msgData = try? JSONSerialization.data(withJSONObject: msgDict),
-                           let message = try? JSONDecoder().decode(IMMessage.self, from: msgData) {
-                            messages.append(message)
-                        }
-                    }
-                    
-                    // 保存到数据库
-                    if !messages.isEmpty {
-                        _ = try? self.database?.saveMessages(messages)
-                    }
-                    
-                    IMLogger.shared.info("""
-                        ✅ 范围同步成功：
-                        - 请求范围: [\(startSeq), \(endSeq)]
-                        - 实际拉取: \(messages.count) 条
-                        """)
-                    
-                    completion(.success(messages.count))
-                    
-                } catch {
-                    IMLogger.shared.error("解析范围同步响应失败: \(error)")
-                    completion(.failure(.decodeFailed(error.localizedDescription)))
+            case .success(let response):
+                guard response.isSuccess, let data = response.data else {
+                    completion(.failure(.networkError(response.message)))
+                    return
                 }
+                
+                // 转换为 IMMessage 对象
+                var messages: [IMMessage] = []
+                for msgData in data.messages {
+                    guard let messageID = msgData.messageID,
+                          let conversationID = msgData.conversationID,
+                          let senderID = msgData.senderID else {
+                        continue
+                    }
+                    
+                    let message = IMMessage()
+                    message.messageID = messageID
+                    message.conversationID = conversationID
+                    message.senderID = senderID
+                    message.seq = msgData.seq ?? 0
+                    message.messageType = IMMessageType(rawValue: msgData.messageType ?? 1) ?? .text
+                    message.content = msgData.content ?? ""
+                    message.createTime = msgData.createTime ?? 0
+                    message.serverTime = msgData.serverTime ?? 0
+                    message.status = IMMessageStatus(rawValue: msgData.status ?? 1) ?? .sent
+                    message.direction = .receive
+                    
+                    messages.append(message)
+                }
+                
+                // 保存到数据库
+                if !messages.isEmpty {
+                    _ = try? self.database.saveMessages(messages)
+                }
+                
+                IMLogger.shared.info("""
+                    ✅ 范围同步成功：
+                    - 请求范围: [\(startSeq), \(endSeq)]
+                    - 实际拉取: \(messages.count) 条
+                    """)
+                
+                completion(.success(messages.count))
                 
             case .failure(let error):
                 IMLogger.shared.error("范围同步请求失败: \(error)")
-                completion(.failure(error))
+                completion(.failure(.networkError(error.localizedDescription)))
             }
         }
     }

@@ -583,7 +583,7 @@ public final class IMClient {
     }
     
     /// 通知所有连接监听器
-    private func notifyConnectionListeners(_ block: (IMConnectionListener) -> Void) {
+    private func notifyConnectionListeners(_ block: @escaping (IMConnectionListener) -> Void) {
         listenerLock.lock()
         let allListeners = connectionListeners.allObjects.compactMap { $0 as? IMConnectionListener }
         listenerLock.unlock()

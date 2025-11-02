@@ -2,6 +2,7 @@
 /// 负责好友的添加、删除、备注等
 
 import Foundation
+import Alamofire
 
 /// 好友监听器
 public protocol IMFriendListener: AnyObject {
@@ -67,7 +68,7 @@ public final class IMFriendManager {
     }
     
     /// 通知所有监听器
-    private func notifyListeners(_ block: (IMFriendListener) -> Void) {
+    private func notifyListeners(_ block: @escaping (IMFriendListener) -> Void) {
         listenerLock.lock()
         let allListeners = listeners.allObjects.compactMap { $0 as? IMFriendListener }
         listenerLock.unlock()

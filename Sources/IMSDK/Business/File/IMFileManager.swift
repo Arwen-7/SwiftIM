@@ -44,25 +44,25 @@ public final class IMFileManager {
     public var downloadBaseURL: String = ""
     
     /// 文件存储根目录
-    private let fileRootDirectory: URL
+    internal let fileRootDirectory: URL
     
     /// URL Session
-    private let session: URLSession
+    internal let session: URLSession
     
     /// 上传任务字典
     private var uploadTasks: [String: URLSessionUploadTask] = [:]
     
     /// 下载任务字典
-    private var downloadTasks: [String: URLSessionDownloadTask] = [:]
+    internal var downloadTasks: [String: URLSessionDownloadTask] = [:]
     
     /// 断点续传数据字典
-    private var resumeDataStore: [String: IMResumeData] = [:]
+    internal var resumeDataStore: [String: IMResumeData] = [:]
     
     /// 监听器列表
-    private var listeners: [WeakWrapper<IMFileTransferListener>] = []
+    private var listeners: NSHashTable<AnyObject> = NSHashTable.weakObjects()
     
     /// 锁
-    private let lock = NSRecursiveLock()
+    internal let lock = NSRecursiveLock()
     
     // MARK: - Initialization
     
@@ -90,8 +90,7 @@ public final class IMFileManager {
         lock.lock()
         defer { lock.unlock() }
         
-        listeners.append(WeakWrapper(value: listener))
-        cleanupListeners()
+        listeners.add(listener)
     }
     
     /// 移除监听器
@@ -99,18 +98,13 @@ public final class IMFileManager {
         lock.lock()
         defer { lock.unlock() }
         
-        listeners.removeAll { $0.value === listener }
-    }
-    
-    /// 清理已释放的监听器
-    private func cleanupListeners() {
-        listeners.removeAll { $0.value == nil }
+        listeners.remove(listener)
     }
     
     /// 通知所有监听器
-    private func notifyListeners(_ block: (IMFileTransferListener) -> Void) {
+    internal func notifyListeners(_ block: (IMFileTransferListener) -> Void) {
         lock.lock()
-        let activeListeners = listeners.compactMap { $0.value }
+        let activeListeners = listeners.allObjects.compactMap { $0 as? IMFileTransferListener }
         lock.unlock()
         
         for listener in activeListeners {
@@ -153,6 +147,29 @@ public final class IMFileManager {
         let url = fileRootDirectory.appendingPathComponent("Thumbnails")
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+    
+    /// 获取临时目录
+    public func getTempDirectory() -> URL {
+        let url = fileRootDirectory.appendingPathComponent("Temp")
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+    
+    /// 根据文件类型获取存储路径
+    internal func getFilePath(for fileType: IMFileType) -> URL {
+        switch fileType {
+        case .image:
+            return getImageDirectory()
+        case .audio:
+            return getAudioDirectory()
+        case .video:
+            return getVideoDirectory()
+        case .file, .document:
+            return getFileDirectory()
+        case .unknown:
+            return getFileDirectory()
+        }
     }
     
     // MARK: - 文件上传
@@ -352,15 +369,6 @@ public final class IMFileManager {
         uploadTasks.removeValue(forKey: taskID)
     }
     
-    /// 取消下载任务
-    public func cancelDownload(_ taskID: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        downloadTasks[taskID]?.cancel()
-        downloadTasks.removeValue(forKey: taskID)
-    }
-    
     // MARK: - 图片处理
     
     /// 生成图片缩略图
@@ -369,6 +377,7 @@ public final class IMFileManager {
     ///   - maxSize: 最大尺寸
     /// - Returns: 缩略图 URL
     public func generateThumbnail(for imageURL: URL, maxSize: CGSize = CGSize(width: 200, height: 200)) -> URL? {
+        #if os(iOS) || os(tvOS) || os(watchOS)
         guard let image = UIImage(contentsOfFile: imageURL.path) else {
             return nil
         }
@@ -399,6 +408,11 @@ public final class IMFileManager {
             IMLogger.shared.error("Failed to save thumbnail: \(error)")
             return nil
         }
+        #else
+        // 非iOS平台暂不支持缩略图生成
+        IMLogger.shared.warning("Thumbnail generation is not supported on this platform")
+        return nil
+        #endif
     }
     
     /// 计算缩略图尺寸

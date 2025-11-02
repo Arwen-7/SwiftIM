@@ -274,6 +274,7 @@ extension IMFileManager {
         at imageURL: URL,
         config: IMImageCompressionConfig = .default
     ) -> URL? {
+        #if os(iOS) || os(tvOS) || os(watchOS)
         guard let image = UIImage(contentsOfFile: imageURL.path) else {
             IMLogger.shared.error("Failed to load image: \(imageURL.path)")
             return nil
@@ -324,6 +325,11 @@ extension IMFileManager {
             IMLogger.shared.error("Failed to save compressed image: \(error)")
             return nil
         }
+        #else
+        // 非iOS平台暂不支持图片压缩
+        IMLogger.shared.warning("Image compression is not supported on this platform")
+        return nil
+        #endif
     }
     
     /// 计算缩放后的尺寸
@@ -357,12 +363,22 @@ extension IMFileManager {
         
         do {
             let cgImage = try imageGenerator.copyCGImage(at: time, actualTime: nil)
-            let thumbnail = UIImage(cgImage: cgImage)
             
-            // 保存缩略图
+            #if os(iOS) || os(tvOS) || os(watchOS)
+            let thumbnail = UIImage(cgImage: cgImage)
             guard let thumbnailData = thumbnail.jpegData(compressionQuality: 0.8) else {
                 return nil
             }
+            #elseif os(macOS)
+            let thumbnail = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+            guard let tiffData = thumbnail.tiffRepresentation,
+                  let bitmapImage = NSBitmapImageRep(data: tiffData),
+                  let thumbnailData = bitmapImage.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else {
+                return nil
+            }
+            #else
+            return nil
+            #endif
             
             let thumbnailURL = getThumbnailDirectory().appendingPathComponent("thumb_\(videoURL.lastPathComponent).jpg")
             try thumbnailData.write(to: thumbnailURL)

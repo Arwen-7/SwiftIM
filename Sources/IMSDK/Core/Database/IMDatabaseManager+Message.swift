@@ -578,9 +578,21 @@ extension IMDatabaseManager {
     
     // MARK: - 协议补充方法
     
+    /// 获取会话消息列表
+    public func getMessages(conversationID: String, limit: Int) -> [IMMessage] {
+        // 使用当前时间作为 beforeTime，获取最新消息
+        let currentTime = IMUtils.currentTimeMillis()
+        return (try? getHistoryMessages(conversationID: conversationID, beforeTime: currentTime, limit: limit)) ?? []
+    }
+    
     /// 获取指定时间之前的消息
     public func getMessagesBefore(conversationID: String, beforeTime: Int64, limit: Int) -> [IMMessage] {
         return (try? getHistoryMessages(conversationID: conversationID, beforeTime: beforeTime, limit: limit)) ?? []
+    }
+    
+    /// 获取历史消息（分页） - 协议要求的方法签名
+    public func getHistoryMessages(conversationID: String, startTime: Int64, count: Int) -> [IMMessage] {
+        return (try? getHistoryMessages(conversationID: conversationID, beforeTime: startTime, limit: count)) ?? []
     }
     
     /// 更新消息状态
@@ -727,7 +739,7 @@ extension IMDatabaseManager {
         
         // 执行查询
         if sqlite3_step(statement) == SQLITE_ROW {
-            return parseMessageFromStatement(statement)
+            return parseMessage(from: statement)
         }
         
         return nil

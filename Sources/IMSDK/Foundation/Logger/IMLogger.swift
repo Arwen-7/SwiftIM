@@ -143,7 +143,7 @@ public final class IMLogger {
     
     // MARK: - Private Methods
     
-    private func log(_ message: String, level: IMLogLevel, file: String, function: String, line: Int) {
+    internal func log(_ message: String, level: IMLogLevel, file: String, function: String, line: Int) {
         guard level >= config.minimumLevel else { return }
         
         let fileName = (file as NSString).lastPathComponent
@@ -191,8 +191,18 @@ public final class IMLogger {
             fileHandle.write(data)
             
             // 检查文件大小
-            if let fileSize = try? fileHandle.offset(), fileSize > config.maxFileSize {
-                rotateLogFiles()
+            if #available(macOS 10.15.4, iOS 13.4, *) {
+                if let fileSize = try? fileHandle.offset(), fileSize > config.maxFileSize {
+                    rotateLogFiles()
+                }
+            } else {
+                // 对于旧版本，使用文件属性获取大小
+                if let path = config.logFilePath,
+                   let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+                   let fileSize = attrs[FileAttributeKey.size] as? UInt64,
+                   fileSize > config.maxFileSize {
+                    rotateLogFiles()
+                }
             }
         }
     }

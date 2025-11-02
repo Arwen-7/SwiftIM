@@ -12,8 +12,7 @@ extension IMDatabaseManager {
     
     /// 保存用户
     /// - Parameter user: 用户对象
-    @discardableResult
-    public func saveUser(_ user: IMUser) throws -> Bool {
+    public func saveUser(_ user: IMUser) throws {
         let startTime = Date()
         
         lock.lock()
@@ -29,8 +28,6 @@ extension IMDatabaseManager {
         
         let elapsed = Date().timeIntervalSince(startTime)
         IMLogger.shared.database("Save user", elapsed: elapsed)
-        
-        return true
     }
     
     /// 批量保存用户
@@ -172,9 +169,9 @@ extension IMDatabaseManager {
     
     /// 批量获取用户
     /// - Parameter userIDs: 用户 ID 数组
-    /// - Returns: 用户字典（userID -> IMUser）
-    public func getUsers(userIDs: [String]) -> [String: IMUser] {
-        guard !userIDs.isEmpty else { return [:] }
+    /// - Returns: 用户数组
+    public func getUsers(userIDs: [String]) -> [IMUser] {
+        guard !userIDs.isEmpty else { return [] }
         
         let startTime = Date()
         
@@ -189,7 +186,7 @@ extension IMDatabaseManager {
         
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
             IMLogger.shared.error("Failed to prepare query: \(getErrorMessage())")
-            return [:]
+            return []
         }
         
         defer {
@@ -201,11 +198,11 @@ extension IMDatabaseManager {
             sqlite3_bind_text(statement, Int32(index + 1), (userID as NSString).utf8String, -1, nil)
         }
         
-        var users: [String: IMUser] = [:]
+        var users: [IMUser] = []
         
         while sqlite3_step(statement) == SQLITE_ROW {
             let user = parseUser(from: statement)
-            users[user.userID] = user
+            users.append(user)
         }
         
         let elapsed = Date().timeIntervalSince(startTime)

@@ -53,7 +53,7 @@ public final class IMUserManager {
     }
     
     /// 通知所有监听器
-    private func notifyListeners(_ block: (IMUserListener) -> Void) {
+    private func notifyListeners(_ block: @escaping (IMUserListener) -> Void) {
         listenerLock.lock()
         let allListeners = listeners.allObjects.compactMap { $0 as? IMUserListener }
         listenerLock.unlock()

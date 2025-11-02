@@ -356,10 +356,11 @@ extension IMPacketHeader: CustomStringConvertible {
         IMPacketHeader {
             magic: 0x\(String(format: "%04X", magic)),
             version: \(version),
+            flags: \(flags),
             command: \(command) (\(command.rawValue)),
             sequence: \(sequence),
             bodyLength: \(bodyLength),
-            reserved: (\(reserved.0), \(reserved.1), \(reserved.2))
+            crc16: 0x\(String(format: "%04X", crc16))
         }
         """
     }

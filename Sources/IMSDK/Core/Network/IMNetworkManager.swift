@@ -15,7 +15,7 @@ public protocol IMRequest {
 }
 
 /// 网络响应
-public struct IMResponse<T: Decodable> {
+public struct IMResponse<T: Decodable>: Decodable {
     public let code: Int
     public let message: String
     public let data: T?

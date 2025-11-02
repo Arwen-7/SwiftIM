@@ -126,6 +126,7 @@ public struct IMAudioMessageContent: Codable {
 public struct IMVideoMessageContent: Codable {
     public var url: String = ""              // 视频 URL
     public var thumbnailUrl: String = ""     // 视频封面 URL
+    public var snapshotUrl: String = ""      // 视频快照 URL（别名）
     public var duration: Int = 0             // 时长（秒）
     public var width: Int = 0                // 视频宽度
     public var height: Int = 0               // 视频高度
@@ -133,6 +134,7 @@ public struct IMVideoMessageContent: Codable {
     public var format: String = ""           // 视频格式（mp4, mov, etc）
     public var localPath: String = ""        // 本地路径
     public var thumbnailPath: String = ""    // 封面本地路径
+    public var snapshotPath: String = ""     // 快照本地路径（别名）
     
     public init() {}
 }
@@ -168,6 +170,16 @@ public struct IMCardMessageContent: Codable {
 }
 
 // MARK: - 文件传输
+
+/// 文件类型
+public enum IMFileType: String, Codable {
+    case image      // 图片
+    case audio      // 音频
+    case video      // 视频
+    case file       // 普通文件
+    case document   // 文档
+    case unknown    // 未知类型
+}
 
 /// 文件上传/下载任务状态
 public enum IMFileTransferStatus: Int, Codable {
@@ -216,19 +228,23 @@ public struct IMFileTransferProgress {
     public var progress: Double             // 进度（0.0 - 1.0）
     public var speed: Double                // 速度（字节/秒）
     public var status: IMFileTransferStatus // 状态
+    public var startTime: Date              // 开始时间
     
     public init(
         taskID: String,
         totalBytes: Int64,
         completedBytes: Int64,
-        status: IMFileTransferStatus = .waiting
+        status: IMFileTransferStatus = .waiting,
+        speed: Double = 0.0,
+        startTime: Date = Date()
     ) {
         self.taskID = taskID
         self.totalBytes = totalBytes
         self.completedBytes = completedBytes
         self.progress = totalBytes > 0 ? Double(completedBytes) / Double(totalBytes) : 0.0
-        self.speed = 0.0
+        self.speed = speed
         self.status = status
+        self.startTime = startTime
     }
 }
 
@@ -429,6 +445,7 @@ public class IMMessage: Codable {
     public var seq: Int64 = 0
     public var sendTime: Int64 = 0
     public var serverTime: Int64 = 0
+    public var createTime: Int64 = 0  // 创建时间
     public var isRead: Bool = false
     public var readBy: [String] = []  // 已读者 ID 列表（群聊）
     public var readTime: Int64 = 0    // 读取时间（单聊）
@@ -443,7 +460,7 @@ public class IMMessage: Codable {
     enum CodingKeys: String, CodingKey {
         case messageID, clientMsgID, conversationID, conversationType, senderID, receiverID
         case groupID, messageType, content, extra, status, direction, seq
-        case sendTime, serverTime, isRead, readBy, readTime, isDeleted, isRevoked, revokedBy, revokedTime, attachedInfo
+        case sendTime, serverTime, createTime, isRead, readBy, readTime, isDeleted, isRevoked, revokedBy, revokedTime, attachedInfo
     }
     
     public required init(from decoder: Decoder) throws {
@@ -463,6 +480,7 @@ public class IMMessage: Codable {
         seq = try container.decodeIfPresent(Int64.self, forKey: .seq) ?? 0
         sendTime = try container.decode(Int64.self, forKey: .sendTime)
         serverTime = try container.decodeIfPresent(Int64.self, forKey: .serverTime) ?? 0
+        createTime = try container.decodeIfPresent(Int64.self, forKey: .createTime) ?? 0
         isRead = try container.decodeIfPresent(Bool.self, forKey: .isRead) ?? false
         readTime = try container.decodeIfPresent(Int64.self, forKey: .readTime) ?? 0
         readBy = try container.decodeIfPresent([String].self, forKey: .readBy) ?? []
@@ -490,6 +508,7 @@ public class IMMessage: Codable {
         try container.encode(seq, forKey: .seq)
         try container.encode(sendTime, forKey: .sendTime)
         try container.encode(serverTime, forKey: .serverTime)
+        try container.encode(createTime, forKey: .createTime)
         try container.encode(isRead, forKey: .isRead)
         try container.encode(readBy, forKey: .readBy)
         try container.encode(readTime, forKey: .readTime)
@@ -711,6 +730,21 @@ public class IMSyncConfig: Codable {
     
     public init(userID: String) {
         self.userID = userID
+    }
+}
+
+/// 同步响应
+public struct IMSyncResponse {
+    public let messages: [IMMessage]    // 消息列表
+    public let maxSeq: Int64            // 最大 seq
+    public let hasMore: Bool            // 是否还有更多
+    public let totalCount: Int64        // 总数量
+    
+    public init(messages: [IMMessage], maxSeq: Int64, hasMore: Bool, totalCount: Int64) {
+        self.messages = messages
+        self.maxSeq = maxSeq
+        self.hasMore = hasMore
+        self.totalCount = totalCount
     }
 }
 

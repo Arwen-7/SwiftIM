@@ -134,8 +134,8 @@ extension IMDatabaseManager {
     
     /// 获取好友列表
     /// - Parameter userID: 用户 ID
-    /// - Returns: 好友 ID 数组
-    public func getFriends(userID: String) -> [String] {
+    /// - Returns: 好友用户对象数组
+    public func getFriends(userID: String) -> [IMUser] {
         let startTime = Date()
         
         lock.lock()
@@ -166,7 +166,8 @@ extension IMDatabaseManager {
         let elapsed = Date().timeIntervalSince(startTime)
         IMLogger.shared.database("Get \(friendIDs.count) friends", elapsed: elapsed)
         
-        return friendIDs
+        // 批量获取用户信息
+        return getUsers(userIDs: friendIDs)
     }
     
     /// 获取好友备注
@@ -222,8 +223,8 @@ extension IMDatabaseManager {
     /// - Parameters:
     ///   - userID: 用户 ID
     ///   - keyword: 关键词（搜索备注）
-    /// - Returns: 好友 ID 数组
-    public func searchFriends(userID: String, keyword: String) -> [String] {
+    /// - Returns: 好友用户对象数组
+    public func searchFriends(userID: String, keyword: String) -> [IMUser] {
         guard !keyword.isEmpty else { return [] }
         
         let startTime = Date()
@@ -262,7 +263,8 @@ extension IMDatabaseManager {
         let elapsed = Date().timeIntervalSince(startTime)
         IMLogger.shared.database("Search \(friendIDs.count) friends", elapsed: elapsed)
         
-        return friendIDs
+        // 批量获取用户信息
+        return getUsers(userIDs: friendIDs)
     }
     
     // MARK: - Update

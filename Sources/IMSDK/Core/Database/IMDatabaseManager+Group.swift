@@ -55,8 +55,7 @@ extension IMDatabaseManager {
     
     /// 保存群组
     /// - Parameter group: 群组对象
-    @discardableResult
-    public func saveGroup(_ group: IMGroup) throws -> Bool {
+    public func saveGroup(_ group: IMGroup) throws {
         let startTime = Date()
         
         lock.lock()
@@ -72,8 +71,6 @@ extension IMDatabaseManager {
         
         let elapsed = Date().timeIntervalSince(startTime)
         IMLogger.shared.database("Save group", elapsed: elapsed)
-        
-        return true
     }
     
     /// 批量保存群组
@@ -344,13 +341,14 @@ extension IMDatabaseManager {
     
     /// 获取群成员列表
     /// - Parameter groupID: 群组 ID
-    /// - Returns: 用户 ID 数组
-    public func getGroupMembers(groupID: String) -> [String] {
+    /// - Returns: 用户对象数组
+    public func getGroupMembers(groupID: String) -> [IMUser] {
         let startTime = Date()
         
         lock.lock()
         defer { lock.unlock() }
         
+        // 先获取用户 ID 列表
         let sql = "SELECT user_id FROM group_members WHERE group_id = ?;"
         
         var statement: OpaquePointer?
@@ -376,7 +374,8 @@ extension IMDatabaseManager {
         let elapsed = Date().timeIntervalSince(startTime)
         IMLogger.shared.database("Get \(userIDs.count) group members", elapsed: elapsed)
         
-        return userIDs
+        // 批量获取用户信息
+        return getUsers(userIDs: userIDs)
     }
     
     /// 更新群组成员数

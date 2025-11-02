@@ -2,6 +2,7 @@
 /// 负责消息的增量同步、分批拉取、去重和进度管理
 
 import Foundation
+import Alamofire
 
 /// 同步进度回调
 public typealias IMSyncProgressHandler = (IMSyncProgress) -> Void
@@ -14,7 +15,7 @@ public final class IMMessageSyncManager {
     
     // MARK: - Properties
     
-    private let database: IMDatabaseProtocol
+    internal let database: IMDatabaseProtocol
     internal let httpManager: IMHTTPManager
     private let messageManager: IMMessageManager
     private let userID: String
@@ -188,7 +189,7 @@ public final class IMMessageSyncManager {
         
         // 获取本地最后同步的 seq
         let syncConfig = database.getSyncConfig(userID: userID)
-        let lastSeq = syncConfig.lastSyncSeq
+        let lastSeq = syncConfig?.lastSyncSeq ?? 0
         
         IMLogger.shared.info("📊 Starting sync from seq: \(lastSeq)")
         
@@ -231,7 +232,7 @@ public final class IMMessageSyncManager {
         IMLogger.shared.debug("📦 Fetching batch \(currentBatch), lastSeq: \(lastSeq), count: \(batchSize)")
         
         // 请求服务器
-        httpManager.syncMessages(lastSeq: lastSeq, count: batchSize) { [weak self] result in
+        self.syncMessages(lastSeq: lastSeq, count: batchSize) { [weak self] result in
             guard let self = self else { return }
             
             switch result {
@@ -418,8 +419,8 @@ public final class IMMessageSyncManager {
         let throughput = duration > 0 ? Double(totalFetched) / duration : 0
         IMLogger.shared.info("✅ Sync completed: \(totalFetched) messages, \(totalBatches) batches, \(String(format: "%.2f", duration))s, \(String(format: "%.0f", throughput)) msg/s")
         
-        // 记录到性能监控
-        IMLogger.performanceMonitor.recordAPILatency("syncMessages", duration: duration)
+        // 性能监控（暂未实现）
+        // IMLogger.performanceMonitor.recordAPILatency("syncMessages", duration: duration)
         
         // 通知完成
         DispatchQueue.main.async {
@@ -437,60 +438,101 @@ public final class IMMessageSyncManager {
     }
 }
 
-// MARK: - HTTP Manager Extension
+// MARK: - Private Helper Methods
 
-extension IMHTTPManager {
+private extension IMMessageSyncManager {
     
     /// 增量同步消息
     /// - Parameters:
     ///   - lastSeq: 上次同步的最大 seq
     ///   - count: 本次拉取数量
     ///   - completion: 完成回调
-    public func syncMessages(
+    func syncMessages(
         lastSeq: Int64,
         count: Int,
         completion: @escaping (Result<IMSyncResponse, Error>) -> Void
     ) {
-        let parameters: [String: Any] = [
-            "lastSeq": lastSeq,
-            "count": count,
-            "timestamp": IMUtils.currentTimeMillis()
-        ]
+        // 创建请求对象
+        struct SyncRequest: IMRequest {
+            let path: String
+            let method: HTTPMethod
+            let parameters: [String: Any]?
+            let headers: HTTPHeaders?
+        }
         
-        request(
+        let request = SyncRequest(
             path: "/api/v1/messages/sync",
             method: .post,
-            parameters: parameters
-        ) { result in
+            parameters: [
+                "lastSeq": lastSeq,
+                "count": count,
+                "timestamp": IMUtils.currentTimeMillis()
+            ],
+            headers: nil
+        )
+        
+        // 定义响应数据结构（使用 Codable）
+        struct SyncData: Codable {
+            struct MessageDict: Codable {
+                let messageID: String?
+                let conversationID: String?
+                let senderID: String?
+                let seq: Int64?
+                let messageType: Int?
+                let content: String?
+                let createTime: Int64?
+                let serverTime: Int64?
+                let status: Int?
+            }
+            
+            let messages: [MessageDict]
+            let maxSeq: Int64
+            let hasMore: Bool
+            let totalCount: Int64
+        }
+        
+        // 发送请求
+        httpManager.request(request, responseType: SyncData.self) { [weak self] result in
+            guard let self = self else { return }
+            
             switch result {
-            case .success(let data):
-                // 解析响应
-                do {
-                    let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-                    guard let dataDict = json?["data"] as? [String: Any] else {
-                        completion(.failure(IMError.unknown("Invalid response format")))
-                        return
+            case .success(let response):
+                guard response.isSuccess, let data = response.data else {
+                    completion(.failure(IMError.unknown(response.message)))
+                    return
+                }
+                
+                // 转换为 IMMessage 对象
+                let messages = data.messages.compactMap { msgData -> IMMessage? in
+                    guard let messageID = msgData.messageID,
+                          let conversationID = msgData.conversationID,
+                          let senderID = msgData.senderID else {
+                        return nil
                     }
                     
-                    // 解析消息列表
-                    let messagesArray = dataDict["messages"] as? [[String: Any]] ?? []
-                    let messages = messagesArray.compactMap { self.parseMessage(from: $0) }
+                    let message = IMMessage()
+                    message.messageID = messageID
+                    message.conversationID = conversationID
+                    message.senderID = senderID
+                    message.seq = msgData.seq ?? 0
+                    message.messageType = IMMessageType(rawValue: msgData.messageType ?? 1) ?? .text
+                    message.content = msgData.content ?? ""
+                    message.createTime = msgData.createTime ?? 0
+                    message.serverTime = msgData.serverTime ?? 0
+                    message.status = IMMessageStatus(rawValue: msgData.status ?? 1) ?? .sent
+                    message.direction = .receive
                     
-                    let maxSeq = dataDict["maxSeq"] as? Int64 ?? 0
-                    let hasMore = dataDict["hasMore"] as? Bool ?? false
-                    let totalCount = dataDict["totalCount"] as? Int64 ?? 0
-                    
-                    let response = IMSyncResponse(
-                        messages: messages,
-                        maxSeq: maxSeq,
-                        hasMore: hasMore,
-                        totalCount: totalCount
-                    )
-                    
-                    completion(.success(response))
-                } catch {
-                    completion(.failure(error))
+                    return message
                 }
+                
+                let syncResponse = IMSyncResponse(
+                    messages: messages,
+                    maxSeq: data.maxSeq,
+                    hasMore: data.hasMore,
+                    totalCount: data.totalCount
+                )
+                
+                completion(.success(syncResponse))
                 
             case .failure(let error):
                 completion(.failure(error))
@@ -523,4 +565,5 @@ extension IMHTTPManager {
         return message
     }
 }
+
 

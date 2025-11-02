@@ -2,6 +2,7 @@
 /// 负责群组的创建、解散、成员管理等
 
 import Foundation
+import Alamofire
 
 /// 群组监听器
 public protocol IMGroupListener: AnyObject {
@@ -67,7 +68,7 @@ public final class IMGroupManager {
     }
     
     /// 通知所有监听器
-    private func notifyListeners(_ block: (IMGroupListener) -> Void) {
+    private func notifyListeners(_ block: @escaping (IMGroupListener) -> Void) {
         listenerLock.lock()
         let allListeners = listeners.allObjects.compactMap { $0 as? IMGroupListener }
         listenerLock.unlock()

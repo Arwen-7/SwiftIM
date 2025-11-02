@@ -3,6 +3,12 @@
 
 import Foundation
 
+#if os(iOS) || os(tvOS) || os(watchOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
 /// 消息监听器
 public protocol IMMessageListener: AnyObject {
     /// 收到新消息
@@ -33,21 +39,21 @@ public final class IMMessageManager {
     // MARK: - Properties
     
     internal let database: IMDatabaseProtocol
-    private let messageQueue: IMMessageQueue
+    internal let messageQueue: IMMessageQueue
     internal let userID: String
     
     private var listeners: NSHashTable<AnyObject> = NSHashTable.weakObjects()
     private let listenerLock = NSLock()
     
     /// 当前活跃的会话ID（用于判断是否增加未读数）
-    private var currentConversationID: String?
-    private let currentConvLock = NSLock()
+    internal var currentConversationID: String?
+    internal let currentConvLock = NSLock()
     
     /// 会话管理器的弱引用（用于更新未读数）
     internal weak var conversationManager: IMConversationManager?
     
     // 消息缓存
-    private let messageCache = IMMemoryCache<IMMessage>(countLimit: 500)
+    internal let messageCache = IMMemoryCache<IMMessage>(countLimit: 500)
     
     /// 发送数据回调（由 IMClient 设置，用于发送数据到传输层）
     /// - Parameters:
@@ -107,7 +113,7 @@ public final class IMMessageManager {
     }
     
     /// 通知所有监听器
-    internal func notifyListeners(_ block: (IMMessageListener) -> Void) {
+    internal func notifyListeners(_ block: @escaping (IMMessageListener) -> Void) {
         listenerLock.lock()
         let allListeners = listeners.allObjects.compactMap { $0 as? IMMessageListener }
         listenerLock.unlock()
@@ -279,7 +285,7 @@ public final class IMMessageManager {
         sendRequest.senderID = message.senderID
         sendRequest.receiverID = message.receiverID
         sendRequest.messageType = Int32(message.messageType.rawValue)
-        sendRequest.sendTime = Int64(message.sendTime.timeIntervalSince1970 * 1000)
+        sendRequest.sendTime = message.sendTime
         
         // 将消息内容编码为 JSON Data
         if let contentData = message.content.data(using: .utf8) {
@@ -365,7 +371,7 @@ public final class IMMessageManager {
             notifyListeners { $0.onMessageStatusChanged(message) }
         } else {
             // 如果缓存中没有，从数据库读取
-            if let message = database.findByPrimaryKey(IMMessage.self, primaryKey: messageID) {
+            if let message = database.getMessage(messageID: messageID) {
                 message.status = status
                 messageCache.set(message, forKey: messageID)
                 notifyListeners { $0.onMessageStatusChanged(message) }
@@ -393,7 +399,7 @@ public final class IMMessageManager {
     }
     
     /// 发送消息确认
-    private func sendMessageAck(messageID: String, status: IMMessageStatus) {
+    internal func sendMessageAck(messageID: String, status: IMMessageStatus) {
         guard let isConnected = isConnected, isConnected() else {
             IMLogger.shared.warning("Not connected, skip sending message ACK")
             return
@@ -448,7 +454,7 @@ public final class IMMessageManager {
         }
         
         // 从数据库获取
-        return database.findByPrimaryKey(IMMessage.self, primaryKey: messageID)
+        return database.getMessage(messageID: messageID)
     }
     
     /// 获取会话消息列表
@@ -457,7 +463,7 @@ public final class IMMessageManager {
         limit: Int = 20,
         offset: Int = 0
     ) -> [IMMessage] {
-        return database.getMessages(conversationID: conversationID, limit: limit, offset: offset)
+        return database.getMessages(conversationID: conversationID, limit: limit)
     }
     
     /// 获取指定时间之前的消息
@@ -466,7 +472,7 @@ public final class IMMessageManager {
         timestamp: Int64,
         limit: Int = 20
     ) -> [IMMessage] {
-        return database.getMessagesBefore(conversationID: conversationID, timestamp: timestamp, limit: limit)
+        return database.getMessagesBefore(conversationID: conversationID, beforeTime: timestamp, limit: limit)
     }
     
     // MARK: - Delete & Revoke
@@ -531,10 +537,10 @@ extension IMMessageManager {
     ) throws -> [IMMessage] {
         let beforeTime = startTime > 0 ? startTime : Int64.max
         
-        let messages = try database.getHistoryMessages(
+        let messages = database.getHistoryMessages(
             conversationID: conversationID,
-            beforeTime: beforeTime,
-            limit: count
+            startTime: beforeTime,
+            count: count
         )
         
         IMLogger.shared.debug("Loaded \(messages.count) history messages for conversation: \(conversationID)")
@@ -555,10 +561,10 @@ extension IMMessageManager {
     ) throws -> [IMMessage] {
         let beforeSeq = startSeq > 0 ? startSeq : Int64.max
         
-        let messages = try database.getHistoryMessagesBySeq(
+        let messages = database.getHistoryMessagesBySeq(
             conversationID: conversationID,
-            beforeSeq: beforeSeq,
-            limit: count
+            startSeq: beforeSeq,
+            count: count
         )
         
         IMLogger.shared.debug("Loaded \(messages.count) history messages by seq for conversation: \(conversationID)")
@@ -645,12 +651,9 @@ extension IMMessageManager {
             return []
         }
         
-        let messages = try database.searchMessages(
+        let messages = database.searchMessages(
             keyword: trimmedKeyword,
             conversationID: conversationID,
-            messageTypes: messageTypes,
-            startTime: startTime,
-            endTime: endTime,
             limit: limit
         )
         
@@ -680,12 +683,18 @@ extension IMMessageManager {
             return 0
         }
         
+        // 构造时间范围
+        let timeRange: (start: Int64, end: Int64)? = {
+            if let start = startTime, let end = endTime {
+                return (start: start, end: end)
+            }
+            return nil
+        }()
+        
         return database.searchMessageCount(
             keyword: trimmedKeyword,
             conversationID: conversationID,
-            messageTypes: messageTypes,
-            startTime: startTime,
-            endTime: endTime
+            timeRange: timeRange
         )
     }
     
@@ -751,12 +760,26 @@ extension IMMessageManager {
         completion: @escaping (Result<IMMessage, Error>) -> Void
     ) {
         // 获取图片信息
+        #if os(iOS) || os(tvOS) || os(watchOS)
         guard let image = UIImage(contentsOfFile: imageURL.path) else {
             completion(.failure(IMError.fileNotFound))
             return
         }
-        
         let imageSize = image.size
+        #elseif os(macOS)
+        guard let image = NSImage(contentsOfFile: imageURL.path) else {
+            completion(.failure(IMError.fileNotFound))
+            return
+        }
+        let imageSize = image.size
+        #else
+        // 对于其他平台，使用文件大小作为替代
+        guard FileManager.default.fileExists(atPath: imageURL.path) else {
+            completion(.failure(IMError.fileNotFound))
+            return
+        }
+        let imageSize = CGSize(width: 0, height: 0)
+        #endif
         let fileSize = IMFileManager.shared.getFileSize(at: imageURL)
         
         // 生成缩略图
@@ -1310,10 +1333,26 @@ extension IMMessageManager {
             return ""
         }
         
+        // 将 IMMessageType 转换为 IMFileType
+        let fileType: IMFileType = {
+            switch message.messageType {
+            case .image:
+                return .image
+            case .audio:
+                return .audio
+            case .video:
+                return .video
+            case .file:
+                return .file
+            default:
+                return .file
+            }
+        }()
+        
         // 使用断点续传下载
         return IMFileManager.shared.downloadFileResumable(
             from: downloadURL,
-            fileType: message.messageType,
+            fileType: fileType,
             taskID: taskID,
             progressHandler: progressHandler
         ) { result in

@@ -12,8 +12,7 @@ extension IMDatabaseManager {
     
     /// 保存会话
     /// - Parameter conversation: 会话对象
-    @discardableResult
-    public func saveConversation(_ conversation: IMConversation) throws -> Bool {
+    public func saveConversation(_ conversation: IMConversation) throws {
         let startTime = Date()
         
         lock.lock()
@@ -29,8 +28,6 @@ extension IMDatabaseManager {
         
         let elapsed = Date().timeIntervalSince(startTime)
         IMLogger.shared.database("Save conversation", elapsed: elapsed)
-        
-        return true
     }
     
     /// 批量保存会话
@@ -593,6 +590,28 @@ extension IMDatabaseManager {
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw IMError.databaseError("Failed to update: \(getErrorMessage())")
         }
+    }
+    
+    /// 获取会话未读数
+    public func getUnreadCount(conversationID: String) -> Int {
+        let sql = "SELECT unread_count FROM conversations WHERE conversation_id = ?;"
+        
+        lock.lock()
+        defer { lock.unlock() }
+        
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            return 0
+        }
+        defer { sqlite3_finalize(statement) }
+        
+        sqlite3_bind_text(statement, 1, (conversationID as NSString).utf8String, -1, nil)
+        
+        if sqlite3_step(statement) == SQLITE_ROW {
+            return Int(sqlite3_column_int(statement, 0))
+        }
+        
+        return 0
     }
 }
 

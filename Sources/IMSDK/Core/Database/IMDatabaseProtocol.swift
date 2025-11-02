@@ -125,6 +125,9 @@ public protocol IMDatabaseProtocol: AnyObject {
     /// 清空未读数
     func clearUnreadCount(conversationID: String) throws
     
+    /// 获取会话未读数
+    func getUnreadCount(conversationID: String) -> Int
+    
     /// 获取总未读数
     func getTotalUnreadCount() -> Int
     
@@ -216,5 +219,26 @@ public protocol IMDatabaseProtocol: AnyObject {
     
     /// 更新最后同步的 seq
     func updateLastSyncSeq(userID: String, seq: Int64) throws
+    
+    /// 设置同步状态
+    func setSyncingState(userID: String, isSyncing: Bool) throws
+    
+    /// 重置同步配置
+    func resetSyncConfig(userID: String) throws
+    
+    /// 获取最旧消息时间
+    func getOldestMessageTime(conversationID: String) -> Int64
+    
+    /// 获取最新消息时间
+    func getLatestMessageTime(conversationID: String) -> Int64
+    
+    /// 获取指定时间范围内的消息
+    func getMessagesInTimeRange(conversationID: String, startTime: Int64, endTime: Int64) throws -> [IMMessage]
+    
+    /// 按发送者搜索消息
+    func searchMessagesBySender(senderID: String, conversationID: String?, limit: Int) throws -> [IMMessage]
+    
+    /// 搜索消息数量
+    func searchMessageCount(keyword: String, conversationID: String?, timeRange: (start: Int64, end: Int64)?) -> Int
 }
 

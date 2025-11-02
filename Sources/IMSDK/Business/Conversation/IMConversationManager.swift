@@ -76,7 +76,7 @@ public final class IMConversationManager {
     }
     
     /// 通知所有监听器
-    private func notifyListeners(_ block: (IMConversationListener) -> Void) {
+    private func notifyListeners(_ block: @escaping (IMConversationListener) -> Void) {
         listenerLock.lock()
         let allListeners = listeners.allObjects.compactMap { $0 as? IMConversationListener }
         listenerLock.unlock()
@@ -90,7 +90,7 @@ public final class IMConversationManager {
     
     /// 获取所有会话
     public func getAllConversations() -> [IMConversation] {
-        return database.getAllConversations()
+        return database.getAllConversations(sortByTime: true)
     }
     
     /// 获取会话
@@ -266,7 +266,7 @@ public final class IMConversationManager {
         completion: ((Result<Void, IMError>) -> Void)? = nil
     ) {
         do {
-            try database.updateConversationUnreadCount(conversationID: conversationID, count: 0)
+            try database.updateConversationUnreadCount(conversationID: conversationID, unreadCount: 0)
             
             // 更新缓存
             if let conversation = conversationCache.get(forKey: conversationID) {
@@ -343,13 +343,6 @@ public final class IMConversationManager {
     
     // MARK: - Unread Count Management
     
-    /// 获取会话未读数
-    /// - Parameter conversationID: 会话 ID
-    /// - Returns: 未读消息数量
-    public func getUnreadCount(conversationID: String) -> Int {
-        return database.getUnreadCount(conversationID: conversationID)
-    }
-    
     /// 标记会话为已读
     /// - Parameter conversationID: 会话 ID
     public func markAsRead(conversationID: String) throws {
@@ -366,18 +359,12 @@ public final class IMConversationManager {
         IMLogger.shared.info("Marked conversation as read: \(conversationID)")
     }
     
-    /// 获取总未读数（排除免打扰会话）
-    /// - Returns: 总未读消息数量
-    public func getTotalUnreadCount() -> Int {
-        return database.getTotalUnreadCount()
-    }
-    
     /// 设置免打扰
     /// - Parameters:
     ///   - conversationID: 会话 ID
     ///   - muted: 是否免打扰
     public func setMuted(conversationID: String, muted: Bool) throws {
-        try database.setConversationMuted(conversationID: conversationID, muted: muted)
+        try database.setConversationMuted(conversationID: conversationID, isMuted: muted)
         
         // 通知监听器
         if let conversation = getConversation(conversationID: conversationID) {

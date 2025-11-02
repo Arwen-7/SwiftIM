@@ -148,6 +148,11 @@ public final class IMTransportSwitcher {
         currentTransport.disconnect()
     }
     
+    /// 发送消息
+    public func sendMessage(body: Data, command: IMCommandType, completion: ((Result<Void, IMTransportError>) -> Void)?) {
+        currentTransport.sendMessage(body: body, command: command, completion: completion)
+    }
+    
     /// 发送数据
     public func send(data: Data, completion: ((Result<Void, IMTransportError>) -> Void)?) {
         currentTransport.send(data: data, completion: completion)
