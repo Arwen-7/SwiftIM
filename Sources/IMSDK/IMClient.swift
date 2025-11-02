@@ -388,9 +388,6 @@ public final class IMClient {
             messageManager: messageManager
         )
         
-        // 关联 messageManager 和 conversationManager（用于未读数更新）
-        messageManager.conversationManager = conversationManager
-        
         self.groupManager = IMGroupManager(
             database: database,
             httpManager: httpManager
@@ -468,13 +465,13 @@ public final class IMClient {
     
     /// 连接传输层
     private func connectTransport() {
-        guard let token = currentToken, let imURL = config?.imURL else { return }
+        guard let userID = currentUserID, let token = currentToken, let imURL = config?.imURL else { return }
         
         updateConnectionState(.connecting)
         
         // 使用协议切换器或单一传输层
         if let switcher = transportSwitcher {
-            switcher.connect(url: imURL, token: token) { [weak self] result in
+            switcher.connect(url: imURL, userID: userID, token: token) { [weak self] result in
                 switch result {
                 case .success:
                     IMLogger.shared.info("✅ Transport connected")
@@ -483,7 +480,7 @@ public final class IMClient {
                 }
             }
         } else if let transport = transport {
-            transport.connect(url: imURL, token: token) { [weak self] result in
+            transport.connect(url: imURL, userID: userID, token: token) { [weak self] result in
                 switch result {
                 case .success:
                     IMLogger.shared.info("✅ Transport connected")
@@ -497,19 +494,6 @@ public final class IMClient {
     /// 连接 WebSocket（兼容旧代码）
     private func connectWebSocket() {
         connectTransport()
-    }
-    
-    /// 处理连接成功
-    private func handleConnected() {
-        IMLogger.shared.info("WebSocket connected")
-        
-        updateConnectionState(.connected)
-        
-        // 同步离线消息
-        // 注意：心跳由 WebSocket 层的 Ping/Pong 机制自动处理
-        syncOfflineMessages()
-        
-        notifyConnectionListeners { $0.onConnected() }
     }
     
     /// 处理连接断开
@@ -819,8 +803,12 @@ public final class IMClient {
             case .cmdKickOut:
                 // 踢出通知
                 handleWebSocketKickOut(wsMessage.body)
+                
+            case .cmdSendMsgRsp:
+                // 消息发送响应（ACK）
+                handleWebSocketSendMessageResponse(wsMessage.body, sequence: wsMessage.sequence)
             
-        default:
+            default:
                 IMLogger.shared.warning("Unhandled WebSocket command: \(wsMessage.command)")
             }
             
@@ -858,6 +846,29 @@ public final class IMClient {
             
         } catch {
             IMLogger.shared.error("Failed to decode push message: \(error)")
+        }
+    }
+    
+    /// 处理消息发送响应（ACK）
+    private func handleWebSocketSendMessageResponse(_ body: Data, sequence: UInt32) {
+        do {
+            // 使用 Protobuf 解析发送响应
+            let sendRsp = try Im_Protocol_SendMessageResponse(serializedData: body)
+            
+            IMLogger.shared.debug("Received send message response: messageID=\(sendRsp.messageID), errorCode=\(sendRsp.errorCode), seq=\(sendRsp.seq)")
+            
+            if sendRsp.errorCode == .errSuccess {
+                // 发送成功，通知消息管理器
+                messageManager?.handleMessageAck(messageID: sendRsp.messageID, status: .sent)
+                IMLogger.shared.info("✅ Message sent successfully: \(sendRsp.messageID)")
+            } else {
+                // 发送失败
+                IMLogger.shared.error("❌ Message send failed: \(sendRsp.messageID), error: \(sendRsp.errorMsg)")
+                messageManager?.handleMessageAck(messageID: sendRsp.messageID, status: .failed)
+            }
+            
+        } catch {
+            IMLogger.shared.error("Failed to decode send message response: \(error)")
         }
     }
     

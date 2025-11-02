@@ -65,9 +65,10 @@ public protocol IMTransportProtocol: AnyObject {
     /// 连接
     /// - Parameters:
     ///   - url: 服务器地址
+    ///   - userID: 用户 ID
     ///   - token: 认证 Token
     ///   - completion: 连接结果回调
-    func connect(url: String, token: String, completion: @escaping (Result<Void, IMTransportError>) -> Void)
+    func connect(url: String, userID: String, token: String, completion: @escaping (Result<Void, IMTransportError>) -> Void)
     
     /// 断开连接
     func disconnect()

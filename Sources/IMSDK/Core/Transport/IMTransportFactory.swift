@@ -87,6 +87,7 @@ public final class IMTransportSwitcher {
     
     /// 当前连接信息
     private var currentURL: String?
+    private var currentUserID: String?
     private var currentToken: String?
     
     // MARK: - Callbacks
@@ -134,13 +135,14 @@ public final class IMTransportSwitcher {
     // MARK: - Public Methods
     
     /// 连接
-    public func connect(url: String, token: String, completion: @escaping (Result<Void, IMTransportError>) -> Void) {
+    public func connect(url: String, userID: String, token: String, completion: @escaping (Result<Void, IMTransportError>) -> Void) {
         lock.lock()
         currentURL = url
+        currentUserID = userID
         currentToken = token
         lock.unlock()
         
-        currentTransport.connect(url: url, token: token, completion: completion)
+        currentTransport.connect(url: url, userID: userID, token: token, completion: completion)
     }
     
     /// 断开连接
@@ -230,10 +232,11 @@ public final class IMTransportSwitcher {
         // 4. 更新当前传输层
         currentTransport = newTransport
         
+        let userID = self.currentUserID ?? ""
         lock.unlock()
         
         // 5. 连接新传输层
-        newTransport.connect(url: url, token: token) { [weak self] result in
+        newTransport.connect(url: url, userID: userID, token: token) { [weak self] result in
             guard let self = self else { return }
             
             self.lock.lock()
@@ -252,9 +255,10 @@ public final class IMTransportSwitcher {
                 // 切换失败，尝试恢复旧连接
                 self.lock.lock()
                 self.currentTransport = oldTransport
+                let rollbackUserID = self.currentUserID ?? ""
                 self.lock.unlock()
                 
-                oldTransport.connect(url: url, token: token) { rollbackResult in
+                oldTransport.connect(url: url, userID: rollbackUserID, token: token) { rollbackResult in
                     switch rollbackResult {
                     case .success:
                         print("[IMTransportSwitcher] 已回滚到旧协议：\(oldType)")

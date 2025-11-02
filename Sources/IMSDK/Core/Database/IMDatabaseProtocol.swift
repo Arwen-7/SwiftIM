@@ -119,9 +119,6 @@ public protocol IMDatabaseProtocol: AnyObject {
     /// 更新未读数
     func updateConversationUnreadCount(conversationID: String, unreadCount: Int) throws
     
-    /// 增加未读数
-    func incrementUnreadCount(conversationID: String, by count: Int) throws
-    
     /// 清空未读数
     func clearUnreadCount(conversationID: String) throws
     

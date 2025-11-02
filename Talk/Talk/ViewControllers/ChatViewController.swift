@@ -85,10 +85,17 @@ class ChatViewController: UIViewController {
         setupKeyboardObservers()
     }
     
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        
+        // 进入聊天页面时，清零未读数
+        markMessagesAsRead()
+    }
+    
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         
-        // 标记所有消息为已读
+        // 离开聊天页面时，再次清零未读数（确保已读）
         markMessagesAsRead()
     }
     
@@ -343,7 +350,7 @@ extension ChatViewController: IMMessageListener {
                 self.messages.append(message)
                 
                 let indexPath = IndexPath(row: self.messages.count - 1, section: 0)
-                self.tableView.insertRows(at: [indexPath], with: .automatic)
+                self.tableView.insertRows(at: [indexPath], with: .none)
                 self.scrollToBottom(animated: true)
                 
                 // 标记为已读

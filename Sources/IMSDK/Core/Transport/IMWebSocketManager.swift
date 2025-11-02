@@ -123,6 +123,13 @@ public final class IMWebSocketManager {
         return _isConnected
     }
     
+    /// 启动心跳（在认证成功后调用）
+    public func startHeartbeat() {
+        IMLogger.shared.info("Starting WebSocket heartbeat (Ping/Pong)")
+        pongReceived = true  // 初始化为 true，假设连接是健康的
+        startPingTimer()
+    }
+    
     // MARK: - Private Methods
     
     private func reconnect() {
@@ -170,18 +177,23 @@ public final class IMWebSocketManager {
     }
     
     private func sendPing() {
-        guard _isConnected, let socket = socket else { return }
+        guard _isConnected, let socket = socket else {
+            IMLogger.shared.debug("Cannot send ping: not connected")
+            return
+        }
         
+        // 检查上一次 Ping 是否收到 Pong
         if !pongReceived {
-            IMLogger.shared.warning("Pong not received, connection may be dead")
+            IMLogger.shared.warning("❌ Pong not received for last Ping, connection may be dead")
             disconnect()
             reconnect()
             return
         }
         
+        // 发送 Ping 并重置标志
         pongReceived = false
         socket.write(ping: Data())
-        IMLogger.shared.verbose("Ping sent")
+        IMLogger.shared.debug("📤 Ping sent, waiting for Pong...")
     }
     
     // MARK: - Event Handling
@@ -190,10 +202,11 @@ public final class IMWebSocketManager {
     private func handleWebSocketEvent(_ event: WebSocketEvent, completion: @escaping (Result<Void, Error>) -> Void) {
         switch event {
         case .connected(let headers):
-            IMLogger.shared.info("WebSocket connected")
+            IMLogger.shared.info("WebSocket connected (physical layer)")
             _isConnected = true
             reconnectAttempts = 0
-            startPingTimer()
+            // 注意：不在这里启动 Ping 定时器
+            // 等待上层认证成功后再启动（通过 startHeartbeat() 方法）
             
             // 连接成功，调用 completion（只调用一次）
             completion(.success(()))
@@ -233,7 +246,7 @@ public final class IMWebSocketManager {
             IMLogger.shared.verbose("Ping received")
             
         case .pong(_):
-            IMLogger.shared.verbose("Pong received")
+            IMLogger.shared.debug("📥 Pong received - connection is alive")
             pongReceived = true
             
         case .viabilityChanged(let isViable):

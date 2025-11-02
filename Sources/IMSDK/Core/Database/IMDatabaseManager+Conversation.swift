@@ -201,7 +201,7 @@ extension IMDatabaseManager {
         lock.lock()
         defer { lock.unlock() }
         
-        let orderBy = sortByTime ? "ORDER BY is_pinned DESC, last_message_time DESC" : ""
+        let orderBy = sortByTime ? "ORDER BY is_pinned DESC, latest_msg_send_time DESC" : ""
         let sql = "SELECT * FROM conversations \(orderBy);"
         
         var statement: OpaquePointer?
@@ -562,33 +562,6 @@ extension IMDatabaseManager {
         
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw IMError.databaseError("Failed to update conversation last message: \(getErrorMessage())")
-        }
-    }
-    
-    /// 增加未读数
-    public func incrementUnreadCount(conversationID: String, by count: Int) throws {
-        let sql = """
-        UPDATE conversations 
-        SET unread_count = unread_count + ?,
-            update_time = ?
-        WHERE conversation_id = ?;
-        """
-        
-        lock.lock()
-        defer { lock.unlock() }
-        
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw IMError.databaseError("Failed to prepare update: \(getErrorMessage())")
-        }
-        defer { sqlite3_finalize(statement) }
-        
-        sqlite3_bind_int(statement, 1, Int32(count))
-        sqlite3_bind_int64(statement, 2, IMUtils.currentTimeMillis())
-        sqlite3_bind_text(statement, 3, conversationID, -1, SQLITE_TRANSIENT)
-        
-        guard sqlite3_step(statement) == SQLITE_DONE else {
-            throw IMError.databaseError("Failed to update: \(getErrorMessage())")
         }
     }
     

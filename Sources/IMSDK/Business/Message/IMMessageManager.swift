@@ -49,9 +49,6 @@ public final class IMMessageManager {
     internal var currentConversationID: String?
     internal let currentConvLock = NSLock()
     
-    /// 会话管理器的弱引用（用于更新未读数）
-    internal weak var conversationManager: IMConversationManager?
-    
     // 消息缓存
     internal let messageCache = IMMemoryCache<IMMessage>(countLimit: 500)
     
@@ -323,30 +320,11 @@ public final class IMMessageManager {
         // 步骤 3：添加到缓存
         messageCache.set(message, forKey: message.messageID)
         
-        // 步骤 4：判断是否需要增加未读数
-        let shouldIncrement: Bool = {
-            // 只有接收的消息才可能增加未读数
-            guard message.direction == .receive else {
-                return false
-            }
-            
-            // 如果当前正在查看该会话，不增加未读数
-            currentConvLock.lock()
-            let isCurrentActive = currentConversationID == message.conversationID
-            currentConvLock.unlock()
-            
-            return !isCurrentActive
-        }()
-        
-        // 增加未读数
-        if shouldIncrement {
-            conversationManager?.incrementUnreadCount(conversationID: message.conversationID)
-        }
-        
-        // 步骤 5：通知监听器
+        // 步骤 4：通知监听器（包括 IMConversationManager）
+        // IMConversationManager 会负责更新未读数
         notifyListeners { $0.onMessageReceived(message) }
         
-        // 步骤 6：发送已送达确认
+        // 步骤 5：发送已送达确认
         sendMessageAck(messageID: message.messageID, status: .delivered)
     }
     

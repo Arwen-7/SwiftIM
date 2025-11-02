@@ -269,33 +269,11 @@ extension IMMessageManager {
                 IMLogger.shared.error("Failed to save received message (async): \(error)")
             }
             
-            // 6. 判断是否需要增加未读数（~1ms）
-            let unreadStart = Date()
-            let shouldIncrement: Bool = {
-                guard message.direction == .receive else {
-                    return false
-                }
-                
-                self.currentConvLock.lock()
-                let isCurrentActive = self.currentConversationID == message.conversationID
-                self.currentConvLock.unlock()
-                
-                return !isCurrentActive
-            }()
-            let unreadCheckElapsed = Date().timeIntervalSince(unreadStart) * 1000
-            
-            // 7. 增加未读数（在主线程执行，~2ms）
-            if shouldIncrement {
-                let incrementStart = Date()
-                DispatchQueue.main.async {
-                    self.conversationManager?.incrementUnreadCount(conversationID: message.conversationID)
-                    let incrementElapsed = Date().timeIntervalSince(incrementStart) * 1000
-                    IMLogger.shared.debug("Unread increment took \(String(format: "%.2f", incrementElapsed))ms")
-                }
-            }
+            // 6. 未读数由 IMConversationManager 在 onMessageReceived 回调中处理
+            // 职责分离：IMMessageManager 负责消息，IMConversationManager 负责会话和未读数
             
             let asyncElapsed = Date().timeIntervalSince(asyncStartTime) * 1000
-            IMLogger.shared.debug("Async processing took \(String(format: "%.2f", asyncElapsed))ms (unread check: \(String(format: "%.2f", unreadCheckElapsed))ms)")
+            IMLogger.shared.debug("Async processing took \(String(format: "%.2f", asyncElapsed))ms")
         }
     }
 }

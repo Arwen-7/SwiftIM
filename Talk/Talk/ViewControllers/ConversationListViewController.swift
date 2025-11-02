@@ -193,8 +193,9 @@ class ConversationListViewController: UIViewController {
     private func createConversation(with userID: String) {
         guard let currentUserID = IMClient.shared.getCurrentUserID() else { return }
         
-        // 创建会话 ID（单聊：两个 userID 排序后拼接）
-        let conversationID = [currentUserID, userID].sorted().joined(separator: "_")
+        // 创建会话 ID（使用 SDK 的标准格式：single_userID1_userID2）
+        let sortedIDs = [currentUserID, userID].sorted()
+        let conversationID = "single_\(sortedIDs[0])_\(sortedIDs[1])"
         
         // 跳转到聊天页面
         let chatVC = ChatViewController(conversationID: conversationID, targetUserID: userID)

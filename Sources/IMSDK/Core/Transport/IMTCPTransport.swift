@@ -82,6 +82,7 @@ public final class IMTCPTransport: IMTransportProtocol {
     // MARK: - Connection Info
     
     private var serverURL: String?
+    private var currentUserID: String?
     private var authToken: String?
     
     /// 是否允许自动重连（主动调用 disconnect() 时为 false）
@@ -133,11 +134,12 @@ public final class IMTCPTransport: IMTransportProtocol {
     
     // MARK: - IMTransportProtocol Methods
     
-    public func connect(url: String, token: String, completion: @escaping (Result<Void, IMTransportError>) -> Void) {
+    public func connect(url: String, userID: String, token: String, completion: @escaping (Result<Void, IMTransportError>) -> Void) {
         lock.lock()
         
         // 保存连接信息
         serverURL = url
+        currentUserID = userID
         authToken = token
         
         // ✅ 启用自动重连

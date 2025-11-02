@@ -346,13 +346,22 @@ public final class IMConversationManager {
     /// 标记会话为已读
     /// - Parameter conversationID: 会话 ID
     public func markAsRead(conversationID: String) throws {
+        // 1. 更新数据库
         try database.clearUnreadCount(conversationID: conversationID)
         
-        // 通知监听器
-        let newCount = 0
-        notifyListeners { $0.onUnreadCountChanged(conversationID, count: newCount) }
+        // 2. 更新内存缓存
+        if let conversation = getConversation(conversationID: conversationID) {
+            conversation.unreadCount = 0
+            conversationCache.set(conversation, forKey: conversationID)
+            
+            // 通知会话更新（让 UI 能刷新显示未读数）
+            notifyListeners { $0.onConversationUpdated(conversation) }
+        }
         
-        // 通知总未读数变化
+        // 3. 通知未读数变化
+        notifyListeners { $0.onUnreadCountChanged(conversationID, count: 0) }
+        
+        // 4. 通知总未读数变化
         let totalCount = database.getTotalUnreadCount()
         notifyListeners { $0.onTotalUnreadCountChanged(totalCount) }
         
@@ -377,28 +386,6 @@ public final class IMConversationManager {
         
         IMLogger.shared.info("Set conversation muted: \(conversationID) -> \(muted)")
     }
-    
-    /// 增加未读数（内部方法，由消息管理器调用）
-    /// - Parameters:
-    ///   - conversationID: 会话 ID
-    ///   - count: 增加的数量
-    internal func incrementUnreadCount(conversationID: String, by count: Int = 1) {
-        do {
-            try database.incrementUnreadCount(conversationID: conversationID, by: count)
-            
-            // 通知监听器
-            let newCount = database.getUnreadCount(conversationID: conversationID)
-            notifyListeners { $0.onUnreadCountChanged(conversationID, count: newCount) }
-            
-            // 通知总未读数变化
-            let totalCount = database.getTotalUnreadCount()
-            notifyListeners { $0.onTotalUnreadCountChanged(totalCount) }
-            
-        } catch {
-            IMLogger.shared.error("Failed to increment unread count: \(error)")
-        }
-    }
-    
     // MARK: - Helper Methods
     
     private func getCurrentUserID() -> String {
@@ -411,7 +398,7 @@ public final class IMConversationManager {
 
 extension IMConversationManager: IMMessageListener {
     public func onMessageReceived(_ message: IMMessage) {
-        // 更新会话最后一条消息
+        // 更新会话最后一条消息（包含未读数管理）
         updateConversationLastMessage(message)
     }
     
