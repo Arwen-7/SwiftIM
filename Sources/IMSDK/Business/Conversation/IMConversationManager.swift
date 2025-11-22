@@ -114,7 +114,9 @@ public final class IMConversationManager {
     /// 根据用户 ID 获取单聊会话
     public func getSingleConversation(userID: String) -> IMConversation? {
         let currentUserID = getCurrentUserID()
-        let conversationID = currentUserID < userID ? "single_\(currentUserID)_\(userID)" : "single_\(userID)_\(currentUserID)"
+        // 排序保证唯一性（参考 OpenIM 实现）
+        let userIDs = [currentUserID, userID].sorted()
+        let conversationID = "single_\(userIDs[0])_\(userIDs[1])"
         return getConversation(conversationID: conversationID)
     }
     

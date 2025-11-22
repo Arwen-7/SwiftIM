@@ -486,8 +486,9 @@ public final class IMMessageManager {
     private func generateConversationID(type: IMConversationType, targetID: String) -> String {
         switch type {
         case .single:
-            // 单聊：使用两个用户 ID 的字典序组合
-            return userID < targetID ? "single_\(userID)_\(targetID)" : "single_\(targetID)_\(userID)"
+            // 单聊：排序两个用户 ID（参考 OpenIM: SingleChatType）
+            let userIDs = [userID, targetID].sorted()
+            return "single_\(userIDs[0])_\(userIDs[1])"
         case .group:
             return "group_\(targetID)"
         case .chatRoom:
