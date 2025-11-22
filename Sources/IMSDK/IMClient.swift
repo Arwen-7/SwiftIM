@@ -2,6 +2,9 @@
 /// 提供统一的接口管理所有 IM 功能
 
 import Foundation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// SDK 配置
 public struct IMConfig {
@@ -126,6 +129,13 @@ public final class IMClient {
     private var connectionListeners: NSHashTable<AnyObject> = NSHashTable.weakObjects()
     private let listenerLock = NSLock()
     
+    // 登录前缓存的监听器（登录后会自动添加到对应的管理器）
+    private var pendingMessageListeners: NSHashTable<AnyObject> = NSHashTable.weakObjects()
+    private var pendingConversationListeners: NSHashTable<AnyObject> = NSHashTable.weakObjects()
+    private var pendingUserListeners: NSHashTable<AnyObject> = NSHashTable.weakObjects()
+    private var pendingGroupListeners: NSHashTable<AnyObject> = NSHashTable.weakObjects()
+    private var pendingFriendListeners: NSHashTable<AnyObject> = NSHashTable.weakObjects()
+    
     // 待处理的断开错误（用于传递断开原因）
     private var pendingDisconnectError: Error?
     private let disconnectErrorLock = NSLock()
@@ -141,6 +151,12 @@ public final class IMClient {
         
         IMLogger.shared.info("IM SDK Version: \(IMSDKVersion.version)")
         IMLogger.shared.info("Transport Layer: WebSocket + TCP dual protocol")
+    }
+    
+    deinit {
+        // 移除通知观察者
+        NotificationCenter.default.removeObserver(self)
+        IMLogger.shared.debug("IMClient deinitialized")
     }
     
     // MARK: - Initialize
@@ -168,6 +184,9 @@ public final class IMClient {
         // 设置网络监听
         networkMonitor.delegate = self
         networkMonitor.startMonitoring()
+        
+        // 设置应用生命周期监听（自动重连）
+        setupApplicationLifecycleObservers()
         
         IMLogger.shared.info("SDK initialized successfully")
     }
@@ -286,6 +305,30 @@ public final class IMClient {
         }
     }
     
+    /// 设置应用生命周期监听（自动重连）
+    private func setupApplicationLifecycleObservers() {
+        #if canImport(UIKit)
+        // 监听应用进入前台
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleApplicationDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification,
+            object: nil
+        )
+        
+        IMLogger.shared.debug("Application lifecycle observers setup")
+        #endif
+    }
+    
+    /// 处理应用变为活跃状态（自动重连）
+    @objc private func handleApplicationDidBecomeActive() {
+        // 检查：已登录 但 未连接
+        if isLoggedIn && !isConnected {
+            IMLogger.shared.info("📱 App became active, auto reconnecting Socket...")
+            connectTransport()
+        }
+    }
+    
     // MARK: - Login/Logout
     
     /// 登录
@@ -385,7 +428,8 @@ public final class IMClient {
         
         self.conversationManager = IMConversationManager(
             database: database,
-            messageManager: messageManager
+            messageManager: messageManager,
+            userID: userID
         )
         
         self.groupManager = IMGroupManager(
@@ -400,7 +444,11 @@ public final class IMClient {
         
         self.typingManager = IMTypingManager(
             userID: userID
-        )        
+        )
+        
+        // 添加登录前缓存的监听器
+        addPendingListeners()
+        
         // 设置输入状态管理器的回调（使用传输层）
         typingManager.onSendData = { [weak self] body, command in
             guard let self = self else { return false }
@@ -428,8 +476,8 @@ public final class IMClient {
             case .success(let user):
                 self?.userManager.setCurrentUser(user)
                 
-                // 连接 WebSocket
-                self?.connectWebSocket()
+                // 连接 Socket
+                self?.connectTransport()
                 
                 completion(.success(user))
                 
@@ -489,11 +537,6 @@ public final class IMClient {
                 }
             }
         }
-    }
-    
-    /// 连接 WebSocket（兼容旧代码）
-    private func connectWebSocket() {
-        connectTransport()
     }
     
     /// 处理连接断开
@@ -580,61 +623,189 @@ public final class IMClient {
     // MARK: - Message Listener Shortcuts
     
     /// 添加消息监听器
+    /// - Note: 如果在登录前调用，监听器会被缓存，登录成功后自动添加
     public func addMessageListener(_ listener: IMMessageListener) {
-        messageManager?.addListener(listener)
+        if let manager = messageManager {
+            manager.addListener(listener)
+        } else {
+            // 登录前缓存监听器
+            listenerLock.lock()
+            pendingMessageListeners.add(listener)
+            listenerLock.unlock()
+            IMLogger.shared.debug("Message listener cached, will be added after login")
+        }
     }
     
     /// 移除消息监听器
     public func removeMessageListener(_ listener: IMMessageListener) {
         messageManager?.removeListener(listener)
+        
+        // 同时从缓存中移除
+        listenerLock.lock()
+        pendingMessageListeners.remove(listener)
+        listenerLock.unlock()
     }
     
     // MARK: - Conversation Listener Shortcuts
     
     /// 添加会话监听器
+    /// - Note: 如果在登录前调用，监听器会被缓存，登录成功后自动添加
     public func addConversationListener(_ listener: IMConversationListener) {
-        conversationManager?.addListener(listener)
+        if let manager = conversationManager {
+            manager.addListener(listener)
+        } else {
+            // 登录前缓存监听器
+            listenerLock.lock()
+            pendingConversationListeners.add(listener)
+            listenerLock.unlock()
+            IMLogger.shared.debug("Conversation listener cached, will be added after login")
+        }
     }
     
     /// 移除会话监听器
     public func removeConversationListener(_ listener: IMConversationListener) {
         conversationManager?.removeListener(listener)
+        
+        // 同时从缓存中移除
+        listenerLock.lock()
+        pendingConversationListeners.remove(listener)
+        listenerLock.unlock()
     }
     
     // MARK: - User Listener Shortcuts
     
     /// 添加用户监听器
+    /// - Note: 如果在登录前调用，监听器会被缓存，登录成功后自动添加
     public func addUserListener(_ listener: IMUserListener) {
-        userManager?.addListener(listener)
+        if let manager = userManager {
+            manager.addListener(listener)
+        } else {
+            // 登录前缓存监听器
+            listenerLock.lock()
+            pendingUserListeners.add(listener)
+            listenerLock.unlock()
+            IMLogger.shared.debug("User listener cached, will be added after login")
+        }
     }
     
     /// 移除用户监听器
     public func removeUserListener(_ listener: IMUserListener) {
         userManager?.removeListener(listener)
+        
+        // 同时从缓存中移除
+        listenerLock.lock()
+        pendingUserListeners.remove(listener)
+        listenerLock.unlock()
     }
     
     // MARK: - Group Listener Shortcuts
     
     /// 添加群组监听器
+    /// - Note: 如果在登录前调用，监听器会被缓存，登录成功后自动添加
     public func addGroupListener(_ listener: IMGroupListener) {
-        groupManager?.addListener(listener)
+        if let manager = groupManager {
+            manager.addListener(listener)
+        } else {
+            // 登录前缓存监听器
+            listenerLock.lock()
+            pendingGroupListeners.add(listener)
+            listenerLock.unlock()
+            IMLogger.shared.debug("Group listener cached, will be added after login")
+        }
     }
     
     /// 移除群组监听器
     public func removeGroupListener(_ listener: IMGroupListener) {
         groupManager?.removeListener(listener)
+        
+        // 同时从缓存中移除
+        listenerLock.lock()
+        pendingGroupListeners.remove(listener)
+        listenerLock.unlock()
     }
     
     // MARK: - Friend Listener Shortcuts
     
     /// 添加好友监听器
+    /// - Note: 如果在登录前调用，监听器会被缓存，登录成功后自动添加
     public func addFriendListener(_ listener: IMFriendListener) {
-        friendManager?.addListener(listener)
+        if let manager = friendManager {
+            manager.addListener(listener)
+        } else {
+            // 登录前缓存监听器
+            listenerLock.lock()
+            pendingFriendListeners.add(listener)
+            listenerLock.unlock()
+            IMLogger.shared.debug("Friend listener cached, will be added after login")
+        }
     }
     
     /// 移除好友监听器
     public func removeFriendListener(_ listener: IMFriendListener) {
         friendManager?.removeListener(listener)
+        
+        // 同时从缓存中移除
+        listenerLock.lock()
+        pendingFriendListeners.remove(listener)
+        listenerLock.unlock()
+    }
+    
+    // MARK: - Private Listener Management
+    
+    /// 添加登录前缓存的监听器到对应的管理器
+    private func addPendingListeners() {
+        listenerLock.lock()
+        defer { listenerLock.unlock() }
+        
+        // 添加消息监听器
+        let messageListeners = pendingMessageListeners.allObjects.compactMap { $0 as? IMMessageListener }
+        for listener in messageListeners {
+            messageManager?.addListener(listener)
+        }
+        if !messageListeners.isEmpty {
+            IMLogger.shared.info("Added \(messageListeners.count) cached message listener(s)")
+        }
+        pendingMessageListeners.removeAllObjects()
+        
+        // 添加会话监听器
+        let conversationListeners = pendingConversationListeners.allObjects.compactMap { $0 as? IMConversationListener }
+        for listener in conversationListeners {
+            conversationManager?.addListener(listener)
+        }
+        if !conversationListeners.isEmpty {
+            IMLogger.shared.info("Added \(conversationListeners.count) cached conversation listener(s)")
+        }
+        pendingConversationListeners.removeAllObjects()
+        
+        // 添加用户监听器
+        let userListeners = pendingUserListeners.allObjects.compactMap { $0 as? IMUserListener }
+        for listener in userListeners {
+            userManager?.addListener(listener)
+        }
+        if !userListeners.isEmpty {
+            IMLogger.shared.info("Added \(userListeners.count) cached user listener(s)")
+        }
+        pendingUserListeners.removeAllObjects()
+        
+        // 添加群组监听器
+        let groupListeners = pendingGroupListeners.allObjects.compactMap { $0 as? IMGroupListener }
+        for listener in groupListeners {
+            groupManager?.addListener(listener)
+        }
+        if !groupListeners.isEmpty {
+            IMLogger.shared.info("Added \(groupListeners.count) cached group listener(s)")
+        }
+        pendingGroupListeners.removeAllObjects()
+        
+        // 添加好友监听器
+        let friendListeners = pendingFriendListeners.allObjects.compactMap { $0 as? IMFriendListener }
+        for listener in friendListeners {
+            friendManager?.addListener(listener)
+        }
+        if !friendListeners.isEmpty {
+            IMLogger.shared.info("Added \(friendListeners.count) cached friend listener(s)")
+        }
+        pendingFriendListeners.removeAllObjects()
     }
     
     // MARK: - Status
@@ -1192,7 +1363,7 @@ extension IMClient: IMNetworkMonitorDelegate {
         // 如果 WebSocket 断开，自动重连
         if connectionState == .disconnected, isLoggedIn {
             IMLogger.shared.info("Auto reconnecting WebSocket due to network recovery...")
-            connectWebSocket()
+            connectTransport()
         }
     }
     

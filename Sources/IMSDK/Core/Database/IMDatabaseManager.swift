@@ -195,6 +195,8 @@ public final class IMDatabaseManager: IMDatabaseProtocol {
                 is_read INTEGER DEFAULT 0,
                 is_deleted INTEGER DEFAULT 0,
                 is_revoked INTEGER DEFAULT 0,
+                revoked_by TEXT,
+                revoked_time INTEGER,
                 create_time INTEGER NOT NULL,
                 update_time INTEGER NOT NULL
             );

@@ -110,9 +110,9 @@ extension IMDatabaseManager {
                 conversation_id, sender_id, receiver_id, group_id,
                 message_type, content, extra,
                 status, direction, send_time, server_time, seq,
-                is_read, is_deleted, is_revoked,
+                is_read, is_deleted, is_revoked, revoked_by, revoked_time,
                 create_time, update_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
             """
         
         var statement: OpaquePointer?
@@ -145,8 +145,10 @@ extension IMDatabaseManager {
         sqlite3_bind_int(statement, 15, message.isRead ? 1 : 0)
         sqlite3_bind_int(statement, 16, message.isDeleted ? 1 : 0)
         sqlite3_bind_int(statement, 17, message.isRevoked ? 1 : 0)
-        sqlite3_bind_int64(statement, 18, currentTime)
-        sqlite3_bind_int64(statement, 19, currentTime)
+        sqlite3_bind_text(statement, 18, message.revokedBy.isEmpty ? nil : (message.revokedBy as NSString).utf8String, -1, nil)
+        sqlite3_bind_int64(statement, 19, message.revokedTime)
+        sqlite3_bind_int64(statement, 20, currentTime)
+        sqlite3_bind_int64(statement, 21, currentTime)
         
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw IMError.databaseError("Failed to insert message: \(getErrorMessage())")
@@ -161,6 +163,7 @@ extension IMDatabaseManager {
                 content = ?, extra = ?,
                 status = ?, server_time = ?, seq = ?,
                 is_read = ?, is_deleted = ?, is_revoked = ?,
+                revoked_by = ?, revoked_time = ?,
                 update_time = ?
             WHERE message_id = ?;
             """
@@ -186,8 +189,10 @@ extension IMDatabaseManager {
         sqlite3_bind_int(statement, 7, message.isRead ? 1 : 0)
         sqlite3_bind_int(statement, 8, message.isDeleted ? 1 : 0)
         sqlite3_bind_int(statement, 9, message.isRevoked ? 1 : 0)
-        sqlite3_bind_int64(statement, 10, currentTime)
-        sqlite3_bind_text(statement, 11, (message.messageID as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(statement, 10, message.revokedBy.isEmpty ? nil : (message.revokedBy as NSString).utf8String, -1, nil)
+        sqlite3_bind_int64(statement, 11, message.revokedTime)
+        sqlite3_bind_int64(statement, 12, currentTime)
+        sqlite3_bind_text(statement, 13, (message.messageID as NSString).utf8String, -1, nil)
         
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw IMError.databaseError("Failed to update message: \(getErrorMessage())")
@@ -434,6 +439,12 @@ extension IMDatabaseManager {
         message.isRead = sqlite3_column_int(statement, 14) != 0
         message.isDeleted = sqlite3_column_int(statement, 15) != 0
         message.isRevoked = sqlite3_column_int(statement, 16) != 0
+        
+        if let revokedBy = sqlite3_column_text(statement, 17) {
+            message.revokedBy = String(cString: revokedBy)
+        }
+        
+        message.revokedTime = sqlite3_column_int64(statement, 18)
         
         return message
     }
@@ -714,10 +725,7 @@ extension IMDatabaseManager {
     /// - Throws: 数据库错误
     public func getLatestMessage(conversationID: String) throws -> IMMessage? {
         let sql = """
-            SELECT message_id, conversation_id, sender_id, receiver_id, group_id,
-                   type, content, status, direction, seq, create_time, send_time,
-                   is_revoked, revoked_by, revoked_time
-            FROM messages
+            SELECT * FROM messages
             WHERE conversation_id = ?
               AND seq > 0
             ORDER BY seq DESC

@@ -36,6 +36,7 @@ public final class IMConversationManager {
     
     private let database: IMDatabaseProtocol
     private let messageManager: IMMessageManager
+    private let userID: String
     
     private var listeners: NSHashTable<AnyObject> = NSHashTable.weakObjects()
     private let listenerLock = NSLock()
@@ -45,9 +46,10 @@ public final class IMConversationManager {
     
     // MARK: - Initialization
     
-    public init(database: IMDatabaseProtocol, messageManager: IMMessageManager) {
+    public init(database: IMDatabaseProtocol, messageManager: IMMessageManager, userID: String) {
         self.database = database
         self.messageManager = messageManager
+        self.userID = userID
         
         setupMessageListener()
     }
@@ -123,27 +125,35 @@ public final class IMConversationManager {
     }
     
     // MARK: - Create/Update Conversation
-    
-    /// 创建或更新会话
-    public func createOrUpdateConversation(
-        conversationID: String,
-        conversationType: IMConversationType,
-        targetID: String,
-        showName: String,
-        faceURL: String,
-        lastMessage: IMMessage? = nil
-    ) -> IMConversation {
+
+    /// 更新会话最后一条消息
+    private func updateConversationLastMessage(_ message: IMMessage) {
+        let conversationID = message.conversationID
+        
+        // 确保会话存在，如果不存在则创建
         var conversation = getConversation(conversationID: conversationID)
+        let isNewConversation = (conversation == nil)
         
         if conversation == nil {
+            // 会话不存在，创建新会话
+            // 对于单聊：targetID 是对话的另一方
+            // - 如果是收到的消息：对方是 senderID
+            // - 如果是发送的消息：对方是 receiverID
+            let targetID: String
+            if message.conversationType == .single {
+                targetID = message.direction == .receive ? message.senderID : message.receiverID
+            } else {
+                targetID = message.groupID
+            }
+            
             // 创建新会话
             conversation = IMConversation()
             conversation?.conversationID = conversationID
-            conversation?.conversationType = conversationType
+            conversation?.conversationType = message.conversationType
             
-            if conversationType == .single {
+            if message.conversationType == .single {
                 conversation?.userID = targetID
-            } else if conversationType == .group {
+            } else if message.conversationType == .group {
                 conversation?.groupID = targetID
             }
             
@@ -151,19 +161,19 @@ public final class IMConversationManager {
         }
         
         guard let conv = conversation else {
-            fatalError("Failed to create conversation")
+            IMLogger.shared.error("Failed to get or create conversation: \(conversationID)")
+            return
         }
         
-        // 更新会话信息
-        conv.showName = showName
-        conv.faceURL = faceURL
-        
-        if let message = lastMessage {
-            conv.lastMessage = message
-            conv.latestMsgSendTime = message.sendTime
-        }
-        
+        // 更新最后一条消息
+        conv.lastMessage = message
+        conv.latestMsgSendTime = message.sendTime
         conv.updateTime = IMUtils.currentTimeMillis()
+        
+        // 如果是收到的消息，增加未读数
+        if message.direction == .receive && !message.isRead {
+            conv.unreadCount += 1
+        }
         
         // 保存到数据库
         try? database.saveConversation(conv)
@@ -172,52 +182,13 @@ public final class IMConversationManager {
         conversationCache.set(conv, forKey: conversationID)
         
         // 通知监听器
-        if conversation == nil {
+        if (isNewConversation) {
             notifyListeners { $0.onConversationCreated(conv) }
         } else {
             notifyListeners { $0.onConversationUpdated(conv) }
         }
         
-        return conv
-    }
-    
-    /// 更新会话最后一条消息
-    private func updateConversationLastMessage(_ message: IMMessage) {
-        let conversationID = message.conversationID
-        
-        guard let conversation = getConversation(conversationID: conversationID) else {
-            // 会话不存在，创建新会话
-            let targetID = message.conversationType == .single ? message.receiverID : message.groupID
-            _ = createOrUpdateConversation(
-                conversationID: conversationID,
-                conversationType: message.conversationType,
-                targetID: targetID,
-                showName: "",
-                faceURL: "",
-                lastMessage: message
-            )
-            return
-        }
-        
-        // 更新最后一条消息
-        conversation.lastMessage = message
-        conversation.latestMsgSendTime = message.sendTime
-        conversation.updateTime = IMUtils.currentTimeMillis()
-        
-        // 如果是收到的消息，增加未读数
-        if message.direction == .receive && !message.isRead {
-            conversation.unreadCount += 1
-        }
-        
-        // 保存到数据库
-        try? database.saveConversation(conversation)
-        
-        // 更新缓存
-        conversationCache.set(conversation, forKey: conversationID)
-        
-        // 通知监听器
-        notifyListeners { $0.onConversationUpdated(conversation) }
-        notifyListeners { $0.onUnreadCountChanged(conversationID, count: conversation.unreadCount) }
+        notifyListeners { $0.onUnreadCountChanged(conversationID, count: conv.unreadCount) }
         
         // 更新总未读数
         updateTotalUnreadCount()
@@ -389,8 +360,7 @@ public final class IMConversationManager {
     // MARK: - Helper Methods
     
     private func getCurrentUserID() -> String {
-        // 从上下文获取当前用户 ID
-        return ""
+        return userID
     }
 }
 
