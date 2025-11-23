@@ -173,10 +173,12 @@ public final class IMConversationManager {
             return
         }
         
-        // 更新最后一条消息
-        conv.lastMessage = message
-        conv.latestMsgSendTime = message.sendTime
-        conv.updateTime = IMUtils.currentTimeMillis()
+        // ✅ 只有当新消息比当前 lastMessage 更新时，才更新（防止历史消息覆盖新消息）
+        if conv.lastMessage == nil || message.sendTime >= conv.latestMsgSendTime {
+            conv.lastMessage = message
+            conv.latestMsgSendTime = message.sendTime
+            conv.updateTime = IMUtils.currentTimeMillis()
+        }
         
         // 如果是收到的消息，增加未读数
         if message.direction == .receive && !message.isRead {

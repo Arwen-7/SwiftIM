@@ -573,6 +573,12 @@ public final class IMClient {
     private func connectTransport() {
         guard let userID = currentUserID, let token = currentToken, let imURL = config?.imURL else { return }
         
+        // ✅ 防止重复连接：如果已经在连接中或已连接，直接返回
+        if connectionState == .connecting || connectionState == .connected {
+            IMLogger.shared.info("Already connecting or connected, skip duplicate connection attempt")
+            return
+        }
+        
         updateConnectionState(.connecting)
         
         // 使用协议切换器或单一传输层

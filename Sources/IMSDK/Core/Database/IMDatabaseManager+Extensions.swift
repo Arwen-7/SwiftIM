@@ -14,8 +14,10 @@ extension IMDatabaseManager {
             throw IMError.databaseError("Database not initialized")
         }
         
+        // ✅ 使用 INSERT OR REPLACE 确保记录一定会被保存
         let sql = """
-        UPDATE sync_config SET is_syncing = ?, last_sync_time = ? WHERE user_id = ?
+        INSERT OR REPLACE INTO sync_config (user_id, is_syncing, last_sync_time, last_sync_seq)
+        VALUES (?, ?, ?, COALESCE((SELECT last_sync_seq FROM sync_config WHERE user_id = ?), 0))
         """
         
         var statement: OpaquePointer?
@@ -25,9 +27,10 @@ extension IMDatabaseManager {
             throw IMError.databaseError("Failed to prepare statement")
         }
         
-        sqlite3_bind_int(statement, 1, isSyncing ? 1 : 0)
-        sqlite3_bind_int64(statement, 2, IMUtils.currentTimeMillis())
-        sqlite3_bind_text(statement, 3, (userID as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(statement, 1, (userID as NSString).utf8String, -1, nil)
+        sqlite3_bind_int(statement, 2, isSyncing ? 1 : 0)
+        sqlite3_bind_int64(statement, 3, IMUtils.currentTimeMillis())
+        sqlite3_bind_text(statement, 4, (userID as NSString).utf8String, -1, nil)
         
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw IMError.databaseError("Failed to execute statement")

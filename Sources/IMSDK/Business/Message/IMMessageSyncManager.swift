@@ -269,7 +269,11 @@ public final class IMMessageSyncManager {
         let syncConfig = database.getSyncConfig(userID: userID)
         let lastSeq = syncConfig?.lastSyncSeq ?? 0
         
-        IMLogger.shared.info("📊 Starting sync from seq: \(lastSeq)")
+        if lastSeq == 0 {
+            IMLogger.shared.info("📊 Starting FULL sync (lastSeq=0, first time sync)")
+        } else {
+            IMLogger.shared.info("📊 Starting INCREMENTAL sync from seq: \(lastSeq)")
+        }
         
         // 设置同步状态
         do {
@@ -363,6 +367,9 @@ public final class IMMessageSyncManager {
             // 3. 更新 lastSyncSeq
             if response.maxSeq > 0 {
                 try database.updateLastSyncSeq(userID: userID, seq: response.maxSeq)
+                IMLogger.shared.info("✅ Updated lastSyncSeq to: \(response.maxSeq)")
+            } else {
+                IMLogger.shared.warning("⚠️ Sync response maxSeq=0, skip updating lastSyncSeq")
             }
             
             // 3. 计算进度

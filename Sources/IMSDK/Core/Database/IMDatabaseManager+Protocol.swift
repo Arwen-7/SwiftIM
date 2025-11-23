@@ -59,10 +59,10 @@ extension IMDatabaseManager {
     }
     
     public func updateLastSyncSeq(userID: String, seq: Int64) throws {
+        // ✅ 使用 INSERT OR REPLACE 确保记录一定会被保存
         let sql = """
-        UPDATE sync_config
-        SET last_sync_seq = ?, last_sync_time = ?
-        WHERE user_id = ?
+        INSERT OR REPLACE INTO sync_config (user_id, last_sync_seq, last_sync_time, is_syncing)
+        VALUES (?, ?, ?, COALESCE((SELECT is_syncing FROM sync_config WHERE user_id = ?), 0))
         """
         
         var statement: OpaquePointer?
@@ -72,9 +72,10 @@ extension IMDatabaseManager {
             throw IMError.databaseError("Failed to prepare sync seq update")
         }
         
-        sqlite3_bind_int64(statement, 1, seq)
-        sqlite3_bind_int64(statement, 2, Int64(Date().timeIntervalSince1970 * 1000))
-        sqlite3_bind_text(statement, 3, userID, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(statement, 1, userID, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int64(statement, 2, seq)
+        sqlite3_bind_int64(statement, 3, Int64(Date().timeIntervalSince1970 * 1000))
+        sqlite3_bind_text(statement, 4, userID, -1, SQLITE_TRANSIENT)
         
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw IMError.databaseError("Failed to update sync seq")

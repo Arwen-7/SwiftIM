@@ -180,8 +180,8 @@ public final class IMLogger {
             osLogType = .default
         }
         
+        // ✅ 只使用 os_log，移除重复的 print
         os_log("%{public}@", log: osLog, type: osLogType, message)
-        print(message)
     }
     
     private func logToFile(_ message: String) {

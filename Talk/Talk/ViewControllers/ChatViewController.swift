@@ -190,9 +190,10 @@ class ChatViewController: UIViewController {
             limit: 50
         ) ?? []
         
+        self.messages = msgs.reversed() // 最新的消息在底部
+        self.tableView.reloadData()
+        
         DispatchQueue.main.async { [weak self] in
-            self?.messages = msgs.reversed() // 最新的消息在底部
-            self?.tableView.reloadData()
             self?.scrollToBottom(animated: false)
         }
     }
