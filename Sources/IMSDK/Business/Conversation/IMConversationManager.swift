@@ -319,6 +319,70 @@ public final class IMConversationManager {
     /// 标记会话为已读
     /// - Parameter conversationID: 会话 ID
     public func markAsRead(conversationID: String) throws {
+        // 1. 获取未读消息ID列表（发送给服务端前需要知道哪些消息需要标记为已读）
+        let unreadMessages = try database.getMessages(conversationID: conversationID, limit: 100)
+            .filter { $0.direction == .receive && !$0.isRead }
+        let messageIDs = unreadMessages.map { $0.messageID }
+        
+        // 2. 更新数据库（本地立即更新，提升用户体验）
+        try database.clearUnreadCount(conversationID: conversationID)
+        
+        // 3. 更新内存缓存
+        if let conversation = getConversation(conversationID: conversationID) {
+            conversation.unreadCount = 0
+            conversationCache.set(conversation, forKey: conversationID)
+            
+            // 通知会话更新（让 UI 能刷新显示未读数）
+            notifyListeners { $0.onConversationUpdated(conversation) }
+        }
+        
+        // 4. 通知未读数变化
+        notifyListeners { $0.onUnreadCountChanged(conversationID, count: 0) }
+        
+        // 5. 通知总未读数变化
+        let totalCount = database.getTotalUnreadCount()
+        notifyListeners { $0.onTotalUnreadCountChanged(totalCount) }
+        
+        // 6. 发送已读回执到服务端（多端同步）
+        if !messageIDs.isEmpty {
+            sendReadReceiptToServer(conversationID: conversationID, messageIDs: messageIDs)
+        }
+        
+        IMLogger.shared.info("Marked conversation as read: \(conversationID), messages: \(messageIDs.count)")
+    }
+    
+    /// 发送已读回执到服务端
+    private func sendReadReceiptToServer(conversationID: String, messageIDs: [String]) {
+        guard let client = IMClient.shared as? IMClient else {
+            IMLogger.shared.warning("IMClient not available, skip sending read receipt")
+            return
+        }
+        
+        // 创建已读回执请求
+        var request = Im_Protocol_ReadReceiptRequest()
+        request.conversationID = conversationID
+        request.messageIds = messageIDs
+        
+        do {
+            let requestData = try request.serializedData()
+            
+            // 发送请求（通过 IMClient 的发送方法）
+            client.sendReadReceipt(requestData) { result in
+                switch result {
+                case .success:
+                    IMLogger.shared.debug("✅ Read receipt sent to server (conversation: \(conversationID), count: \(messageIDs.count))")
+                case .failure(let error):
+                    IMLogger.shared.error("❌ Failed to send read receipt: \(error)")
+                }
+            }
+        } catch {
+            IMLogger.shared.error("Failed to serialize read receipt request: \(error)")
+        }
+    }
+    
+    /// 标记会话为已读（来自远端同步）
+    /// 用于多端同步：当前用户在其他设备标记已读后，本设备收到推送时调用
+    internal func markAsReadFromRemote(conversationID: String) throws {
         // 1. 更新数据库
         try database.clearUnreadCount(conversationID: conversationID)
         
@@ -338,7 +402,7 @@ public final class IMConversationManager {
         let totalCount = database.getTotalUnreadCount()
         notifyListeners { $0.onTotalUnreadCountChanged(totalCount) }
         
-        IMLogger.shared.info("Marked conversation as read: \(conversationID)")
+        IMLogger.shared.info("📖 Marked conversation as read from remote: \(conversationID)")
     }
     
     /// 设置免打扰

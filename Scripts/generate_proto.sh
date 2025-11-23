@@ -23,10 +23,7 @@ fi
 
 # 定义路径
 PROTO_DIR="Sources/IMSDK/Core/Protocol"
-OUTPUT_DIR="Sources/IMSDK/Core/Protocol/Generated"
-
-# 创建输出目录
-mkdir -p "$OUTPUT_DIR"
+OUTPUT_DIR="$PROTO_DIR"  # 直接输出到 Protocol 目录
 
 # 编译 proto 文件
 echo "📝 编译 IMProtocol.proto..."

@@ -50,6 +50,8 @@ public enum IMCommandType: UInt16 {
     case syncReq = 300
     case syncRsp = 301
     case syncFinished = 302
+    case syncRangeReq = 303
+    case syncRangeRsp = 304
     
     // 在线状态（400-499）
     case onlineStatusReq = 400

@@ -10,7 +10,6 @@
 //
 
 import Foundation
-import Alamofire
 
 // MARK: - 消息丢失检测配置
 public struct IMMessageLossConfig {
@@ -54,6 +53,7 @@ public struct IMMessageLossInfo {
         return expectedSeq...actualSeq - 1
     }
 }
+
 
 // MARK: - 消息丢失检测
 extension IMMessageManager {
@@ -243,165 +243,23 @@ extension IMMessageManager {
             return
         }
         
-        // 调用增量同步接口补拉指定范围的消息
+        // 调用 IMMessageSyncManager 的范围同步接口
         guard let syncManager = IMClient.shared.messageSyncManager else {
             IMLogger.shared.error("❌ 补拉失败：IMMessageSyncManager 未初始化")
             return
         }
         
-        // 使用增量同步接口，传入起始和结束 seq
+        // 使用范围同步接口，传入起始和结束 seq（响应通过事件通知）
         syncManager.syncMessagesInRange(
             conversationID: lossInfo.conversationID,
             startSeq: lossInfo.expectedSeq,
-            endSeq: lossInfo.actualSeq - 1
-        ) { [weak self] result in
-            guard let self = self else { return }
-            
-            switch result {
-            case .success(let pulledCount):
-                IMLogger.shared.info("""
-                    ✅ 补拉成功：
-                    - 会话: \(lossInfo.conversationID)
-                    - seq 范围: \(lossInfo.missingRange)
-                    - 补拉数量: \(pulledCount)
-                    """)
-                
-            case .failure(let error):
-                IMLogger.shared.error("""
-                    ❌ 补拉失败：
-                    - 会话: \(lossInfo.conversationID)
-                    - seq 范围: \(lossInfo.missingRange)
-                    - 错误: \(error)
-                    """)
-                
-                // 重试
-                let nextRetryCount = retryCount + 1
-                DispatchQueue.main.asyncAfter(deadline: .now() + IMMessageManager.lossConfig.retryInterval) {
-                    self.requestMissingMessages(lossInfo: lossInfo, retryCount: nextRetryCount)
-                }
+            endSeq: lossInfo.actualSeq - 1,
+            retryCount: retryCount,
+            retryHandler: { [weak self] in
+                // 重试回调
+                self?.requestMissingMessages(lossInfo: lossInfo, retryCount: retryCount + 1)
             }
-        }
-    }
-}
-
-// MARK: - IMMessageSyncManager 扩展：范围同步
-extension IMMessageSyncManager {
-    
-    /// 同步指定 seq 范围的消息（用于补拉丢失的消息）
-    /// - Parameters:
-    ///   - conversationID: 会话 ID（可选，如果指定则只同步该会话）
-    ///   - startSeq: 起始 seq（包含）
-    ///   - endSeq: 结束 seq（包含）
-    ///   - completion: 完成回调，返回成功拉取的消息数量
-    func syncMessagesInRange(
-        conversationID: String? = nil,
-        startSeq: Int64,
-        endSeq: Int64,
-        completion: @escaping (Result<Int, IMError>) -> Void
-    ) {
-        IMLogger.shared.info("""
-            🔄 范围同步消息：
-            - 会话: \(conversationID ?? "全局")
-            - seq 范围: [\(startSeq), \(endSeq)]
-            - 预计数量: \(endSeq - startSeq + 1)
-            """)
-        
-        // 构造同步请求参数
-        var params: [String: Any] = [
-            "start_seq": startSeq,
-            "end_seq": endSeq,
-            "count": min(endSeq - startSeq + 1, 100)  // 限制单次拉取数量
-        ]
-        
-        if let conversationID = conversationID {
-            params["conversation_id"] = conversationID
-        }
-        
-        // 创建请求对象
-        struct SyncRangeRequest: IMRequest {
-            let path: String
-            let method: HTTPMethod
-            let parameters: [String: Any]?
-            let headers: HTTPHeaders?
-        }
-        
-        let request = SyncRangeRequest(
-            path: "/messages/sync_range",
-            method: .post,
-            parameters: params,
-            headers: nil
         )
-        
-        // 定义响应数据结构
-        struct SyncRangeData: Codable {
-            struct MessageItem: Codable {
-                let messageID: String?
-                let conversationID: String?
-                let senderID: String?
-                let seq: Int64?
-                let messageType: Int?
-                let content: String?
-                let createTime: Int64?
-                let serverTime: Int64?
-                let status: Int?
-            }
-            
-            let messages: [MessageItem]
-        }
-        
-        // 发送请求
-        httpManager.request(request, responseType: SyncRangeData.self) { [weak self] result in
-            guard let self = self else { return }
-            
-            switch result {
-            case .success(let response):
-                guard response.isSuccess, let data = response.data else {
-                    completion(.failure(.networkError(response.message)))
-                    return
-                }
-                
-                // 转换为 IMMessage 对象
-                var messages: [IMMessage] = []
-                for msgData in data.messages {
-                    guard let messageID = msgData.messageID,
-                          let conversationID = msgData.conversationID,
-                          let senderID = msgData.senderID else {
-                        continue
-                    }
-                    
-                    let message = IMMessage()
-                    message.messageID = messageID
-                    message.conversationID = conversationID
-                    message.senderID = senderID
-                    message.seq = msgData.seq ?? 0
-                    message.messageType = IMMessageType(rawValue: msgData.messageType ?? 1) ?? .text
-                    message.content = msgData.content ?? ""
-                    message.createTime = msgData.createTime ?? 0
-                    message.serverTime = msgData.serverTime ?? 0
-                    message.status = IMMessageStatus(rawValue: msgData.status ?? 1) ?? .sent
-                    message.direction = .receive
-                    
-                    messages.append(message)
-                }
-                
-                // 保存到数据库
-                if !messages.isEmpty {
-                    _ = try? self.database.saveMessages(messages)
-                }
-                
-                IMLogger.shared.info("""
-                    ✅ 范围同步成功：
-                    - 请求范围: [\(startSeq), \(endSeq)]
-                    - 实际拉取: \(messages.count) 条
-                    """)
-                
-                completion(.success(messages.count))
-                
-            case .failure(let error):
-                IMLogger.shared.error("范围同步请求失败: \(error)")
-                completion(.failure(.networkError(error.localizedDescription)))
-            }
-        }
     }
 }
 

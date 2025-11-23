@@ -328,6 +328,26 @@ public final class IMMessageManager {
         sendMessageAck(messageID: message.messageID, status: .delivered)
     }
     
+    /// 处理同步的历史消息（批量）
+    /// 注意：此方法假设消息已经保存到数据库，只负责更新缓存和通知 UI
+    internal func handleSyncedMessages(_ messages: [IMMessage]) {
+        guard !messages.isEmpty else { return }
+        
+        IMLogger.shared.info("📥 Processing \(messages.count) synced messages")
+        
+        // 批量添加到缓存
+        for message in messages {
+            messageCache.set(message, forKey: message.messageID)
+        }
+        
+        // 通知监听器（会触发会话列表更新）
+        for message in messages {
+            notifyListeners { $0.onMessageReceived(message) }
+        }
+        
+        IMLogger.shared.debug("✅ Synced messages processed, UI should update now")
+    }
+    
     /// 处理消息确认
     public func handleMessageAck(messageID: String, status: IMMessageStatus) {
         IMLogger.shared.debug("Message ACK: \(messageID), status: \(status)")
@@ -420,6 +440,21 @@ public final class IMMessageManager {
            let message = getMessage(messageID: firstMessage) {
             notifyListeners { $0.onMessageReadReceiptReceived(conversationID: message.conversationID, messageIDs: messageIDs) }
         }
+    }
+    
+    /// 通知已读回执（用于处理服务端推送的已读回执）
+    internal func notifyReadReceiptReceived(conversationID: String, messageIDs: [String], readerID: String, readTime: Int64) {
+        IMLogger.shared.info("📖 Read receipt received: conversation=\(conversationID), reader=\(readerID), count=\(messageIDs.count)")
+        
+        // 更新数据库中的消息已读状态
+        do {
+            try database.markMessagesAsRead(messageIDs: messageIDs)
+        } catch {
+            IMLogger.shared.error("Failed to mark messages as read: \(error)")
+        }
+        
+        // 通知监听器
+        notifyListeners { $0.onMessageReadReceiptReceived(conversationID: conversationID, messageIDs: messageIDs) }
     }
     
     // MARK: - Query Messages

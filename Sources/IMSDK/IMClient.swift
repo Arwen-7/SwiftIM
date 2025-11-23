@@ -303,6 +303,16 @@ public final class IMClient {
         messageRouter.register(command: .kickOut, type: Im_Protocol_KickOutNotification.self) { [weak self] notification, seq in
             self?.handleTCPKickOut(notification)
         }
+        
+        // 注册同步响应
+        messageRouter.register(command: .syncRsp, type: Im_Protocol_SyncResponse.self) { [weak self] response, seq in
+            self?.messageSyncManager?.handleSyncResponse(response, sequence: seq)
+        }
+        
+        // 注册范围同步响应
+        messageRouter.register(command: .syncRangeRsp, type: Im_Protocol_SyncRangeResponse.self) { [weak self] response, seq in
+            self?.messageSyncManager?.handleSyncRangeResponse(response, sequence: seq)
+        }
     }
     
     /// 设置应用生命周期监听（自动重连）
@@ -416,10 +426,46 @@ public final class IMClient {
         
         self.messageSyncManager = IMMessageSyncManager(
             database: database,
-            httpManager: httpManager,
             messageManager: messageManager,
             userID: userID
         )
+        
+        // 设置同步管理器的回调（使用传输层）
+        messageSyncManager.onSendData = { [weak self] body, command, completion in
+            guard let self = self else {
+                completion(.failure(IMError.notInitialized))
+                return
+            }
+            
+            // 使用 transport 的 sendMessage 方法，转换错误类型
+            let wrappedCompletion: (Result<Void, IMTransportError>) -> Void = { result in
+                switch result {
+                case .success:
+                    completion(.success(()))
+                case .failure(let error):
+                    completion(.failure(error))
+                }
+            }
+            
+            if let switcher = self.transportSwitcher {
+                switcher.sendMessage(body: body, command: command, completion: wrappedCompletion)
+            } else if let transport = self.transport {
+                transport.sendMessage(body: body, command: command, completion: wrappedCompletion)
+            } else {
+                completion(.failure(IMError.notConnected))
+            }
+        }
+        
+        messageSyncManager.isConnected = { [weak self] in
+            guard let self = self else { return false }
+            if let switcher = self.transportSwitcher {
+                return switcher.isConnected
+            } else if let transport = self.transport {
+                return transport.isConnected
+            } else {
+                return false
+            }
+        }
         
         self.userManager = IMUserManager(
             database: database,
@@ -572,25 +618,17 @@ public final class IMClient {
         IMLogger.shared.info("Syncing offline messages...")
         
         // 使用消息同步管理器进行增量同步
-        messageSyncManager?.startSync { result in
-            switch result {
-            case .success:
-                IMLogger.shared.info("✅ Offline messages synced successfully")
-            case .failure(let error):
-                IMLogger.shared.error("❌ Failed to sync offline messages: \(error)")
-            }
-        }
+        messageSyncManager?.startSync()
     }
     
     /// 手动触发消息同步（供外部调用）
     /// - Parameter completion: 完成回调
-    public func syncMessages(completion: IMSyncCompletionHandler? = nil) {
+    public func syncMessages() {
         guard messageSyncManager != nil else {
-            completion?(.failure(IMError.notLoggedIn))
             return
         }
         
-        messageSyncManager.startSync(completion: completion)
+        messageSyncManager.startSync()
     }
     
     // MARK: - Connection Listener
@@ -840,6 +878,42 @@ public final class IMClient {
         return IMSDKVersion.version
     }
     
+    // MARK: - Read Receipt
+    
+    /// 发送已读回执到服务端
+    /// - Parameters:
+    ///   - requestData: 已读回执请求数据（Protobuf 序列化后的数据）
+    ///   - completion: 完成回调
+    internal func sendReadReceipt(_ requestData: Data, completion: @escaping (Result<Void, Error>) -> Void) {
+        guard isConnected else {
+            completion(.failure(IMError.notConnected))
+            return
+        }
+        
+        // 通过传输层发送已读回执
+        if let switcher = transportSwitcher {
+            switcher.sendMessage(body: requestData, command: .readReceiptReq) { result in
+                switch result {
+                case .success:
+                    completion(.success(()))
+                case .failure(let error):
+                    completion(.failure(error))
+                }
+            }
+        } else if let transport = transport {
+            transport.sendMessage(body: requestData, command: .readReceiptReq) { result in
+                switch result {
+                case .success:
+                    completion(.success(()))
+                case .failure(let error):
+                    completion(.failure(error))
+                }
+            }
+        } else {
+            completion(.failure(IMError.notConnected))
+        }
+    }
+    
     // MARK: - Network Status
     
     /// 获取当前网络状态
@@ -979,6 +1053,18 @@ public final class IMClient {
                 // 消息发送响应（ACK）
                 handleWebSocketSendMessageResponse(wsMessage.body, sequence: wsMessage.sequence)
             
+            case .cmdSyncRsp:
+                // 增量同步响应
+                handleWebSocketSyncResponse(wsMessage.body, sequence: wsMessage.sequence)
+            
+            case .cmdSyncRangeRsp:
+                // 范围同步响应
+                handleWebSocketSyncRangeResponse(wsMessage.body, sequence: wsMessage.sequence)
+            
+            case .cmdReadReceiptRsp:
+                // 已读回执响应
+                handleWebSocketReadReceiptResponse(wsMessage.body, sequence: wsMessage.sequence)
+            
             default:
                 IMLogger.shared.warning("Unhandled WebSocket command: \(wsMessage.command)")
             }
@@ -1040,6 +1126,52 @@ public final class IMClient {
             
         } catch {
             IMLogger.shared.error("Failed to decode send message response: \(error)")
+        }
+    }
+    
+    private func handleWebSocketSyncResponse(_ body: Data, sequence: UInt32) {
+        do {
+            // 使用 Protobuf 解析同步响应
+            let syncRsp = try Im_Protocol_SyncResponse(serializedData: body)
+            
+            IMLogger.shared.debug("Received sync response: seq=\(sequence), messages=\(syncRsp.messages.count), maxSeq=\(syncRsp.maxSeq)")
+            
+            // 转发给同步管理器处理
+            messageSyncManager?.handleSyncResponse(syncRsp, sequence: sequence)
+            
+        } catch {
+            IMLogger.shared.error("Failed to decode sync response: \(error)")
+        }
+    }
+    
+    private func handleWebSocketSyncRangeResponse(_ body: Data, sequence: UInt32) {
+        do {
+            // 使用 Protobuf 解析范围同步响应
+            let syncRangeRsp = try Im_Protocol_SyncRangeResponse(serializedData: body)
+            
+            IMLogger.shared.debug("Received sync range response: seq=\(sequence), requestId=\(syncRangeRsp.requestID), messages=\(syncRangeRsp.messages.count)")
+            
+            // 转发给同步管理器处理
+            messageSyncManager?.handleSyncRangeResponse(syncRangeRsp, sequence: sequence)
+            
+        } catch {
+            IMLogger.shared.error("Failed to decode sync range response: \(error)")
+        }
+    }
+    
+    private func handleWebSocketReadReceiptResponse(_ body: Data, sequence: UInt32) {
+        do {
+            // 使用 Protobuf 解析已读回执响应
+            let readReceiptRsp = try Im_Protocol_ReadReceiptResponse(serializedData: body)
+            
+            if readReceiptRsp.errorCode == .errSuccess {
+                IMLogger.shared.debug("✅ Read receipt sent successfully (seq=\(sequence))")
+            } else {
+                IMLogger.shared.error("❌ Read receipt failed: \(readReceiptRsp.errorMsg)")
+            }
+            
+        } catch {
+            IMLogger.shared.error("Failed to decode read receipt response: \(error)")
         }
     }
     
@@ -1152,19 +1284,32 @@ public final class IMClient {
             // 使用 Protobuf 解析已读回执推送
             let readReceipt = try Im_Protocol_ReadReceiptPush(serializedData: body)
             
-            IMLogger.shared.info("Received read receipt: conversation=\(readReceipt.conversationID), count=\(readReceipt.messageIds.count)")
+            IMLogger.shared.info("📖 Received read receipt push: conversation=\(readReceipt.conversationID), user=\(readReceipt.userID), count=\(readReceipt.messageIds.count)")
             
-            // 调用消息管理器处理已读回执
-            for messageID in readReceipt.messageIds {
+            // 如果是其他端标记为已读，则本端也应该清除未读数
+            // 注意：这里只处理多端同步的情况（同一个用户在不同设备上的同步）
+            if readReceipt.userID == currentUserID {
+                // 是当前用户在其他设备标记的已读，需要同步本地状态
                 do {
-                    try databaseManager?.updateMessageReadStatus(
-                        messageID: messageID,
-                        readerID: readReceipt.userID,
-                        readTime: readReceipt.readTime
-                    )
-            } catch {
-                IMLogger.shared.error("Failed to update read receipt: \(error)")
-            }
+                    // 清除本地未读数
+                    try conversationManager?.markAsReadFromRemote(conversationID: readReceipt.conversationID)
+                    
+                    IMLogger.shared.debug("✅ Read receipt synced from other device")
+                } catch {
+                    IMLogger.shared.error("❌ Failed to sync read receipt: \(error)")
+                }
+            } else {
+                // 是对方用户标记已读（例如群聊场景）
+                // 这里可以通知上层，显示"对方已读"
+                IMLogger.shared.debug("ℹ️ Message read by other user: \(readReceipt.userID)")
+                
+                // 通知监听器（可用于显示已读回执）
+                messageManager?.notifyReadReceiptReceived(
+                    conversationID: readReceipt.conversationID,
+                    messageIDs: readReceipt.messageIds,
+                    readerID: readReceipt.userID,
+                    readTime: readReceipt.readTime
+                )
             }
             
         } catch {
@@ -1267,14 +1412,7 @@ public final class IMClient {
         IMLogger.shared.info("🔄 Triggering incremental sync from seq: \(localMaxSeq + 1)")
         
         // 触发增量同步
-        messageSyncManager?.sync(fromSeq: localMaxSeq + 1) { result in
-            switch result {
-            case .success:
-                IMLogger.shared.info("✅ Incremental sync completed (triggered by packet loss)")
-            case .failure(let error):
-                IMLogger.shared.error("❌ Incremental sync failed: \(error)")
-            }
-        }
+        messageSyncManager?.sync(fromSeq: localMaxSeq + 1)
     }
     
     /// 处理认证响应

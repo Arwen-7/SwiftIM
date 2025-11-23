@@ -61,6 +61,8 @@ enum CommandType {
     CMD_SYNC_REQ = 300;          // 增量同步请求
     CMD_SYNC_RSP = 301;          // 增量同步响应
     CMD_SYNC_FINISHED = 302;     // 同步完成通知
+    CMD_SYNC_RANGE_REQ = 303;    // 范围同步请求
+    CMD_SYNC_RANGE_RSP = 304;    // 范围同步响应
     
     // 在线状态（400-499）
     CMD_ONLINE_STATUS_REQ = 400; // 查询在线状态请求
@@ -226,18 +228,57 @@ message RevokeMessagePush {
 
 // 增量同步请求
 message SyncRequest {
-    int64 min_seq = 1;           // 客户端当前最小 seq
-    int64 max_seq = 2;           // 客户端当前最大 seq
-    int32 limit = 3;             // 每次拉取数量
+    int64 last_seq = 1;          // 上次同步的最大 seq（从此 seq 之后开始拉取）
+    int32 count = 2;             // 本次拉取数量
+    int64 timestamp = 3;         // 请求时间戳（毫秒）
 }
 
 // 增量同步响应
 message SyncResponse {
     ErrorCode error_code = 1;
     string error_msg = 2;
-    repeated PushMessage messages = 3;
-    int64 server_max_seq = 4;    // 服务器当前最大 seq
+    repeated MessageData messages = 3;  // 消息列表
+    int64 max_seq = 4;           // 本批消息的最大 seq
     bool has_more = 5;           // 是否还有更多消息
+    int64 total_count = 6;       // 总共需要同步的消息数量
+    int64 server_time = 7;       // 服务器时间
+}
+
+// 消息数据（用于同步响应）
+message MessageData {
+    string message_id = 1;
+    string conversation_id = 2;
+    string sender_id = 3;
+    int64 seq = 4;
+    int32 message_type = 5;
+    string content = 6;
+    int64 create_time = 7;
+    int64 server_time = 8;
+    int32 status = 9;
+    map<string, string> extra = 10;
+    bool is_read = 11;  // 当前用户是否已读该消息
+}
+
+// 范围同步请求（用于补齐丢失的消息）
+message SyncRangeRequest {
+    int64 start_seq = 1;         // 起始 seq（包含）
+    int64 end_seq = 2;           // 结束 seq（包含）
+    string conversation_id = 3;  // 会话 ID（可选，为空表示全局同步）
+    int32 count = 4;             // 每批拉取数量
+    string request_id = 5;       // 请求唯一标识（客户端生成，用于匹配响应）
+}
+
+// 范围同步响应
+message SyncRangeResponse {
+    ErrorCode error_code = 1;
+    string error_msg = 2;
+    repeated MessageData messages = 3;  // 消息列表
+    int64 start_seq = 4;         // 本批起始 seq
+    int64 end_seq = 5;           // 本批结束 seq
+    bool has_more = 6;           // 是否还有更多消息
+    int64 server_time = 7;       // 服务器时间
+    string conversation_id = 8;  // 会话 ID（与请求保持一致）
+    string request_id = 9;       // 请求唯一标识（与请求保持一致）
 }
 
 // ============================================
