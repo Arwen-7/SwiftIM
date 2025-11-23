@@ -153,17 +153,28 @@ message KickOutNotification {
 // 消息相关
 // ============================================
 
+// 通用消息信息（各场景复用）
+message MessageInfo {
+    string message_id = 1;       // 服务器消息 ID（发送时为空，由服务端生成）
+    string client_msg_id = 2;    // 客户端消息 ID
+    string conversation_id = 3;  // 会话 ID
+    string sender_id = 4;        // 发送者 ID
+    string receiver_id = 5;      // 接收者 ID（单聊）
+    string group_id = 6;         // 群组 ID（群聊）
+    int32 message_type = 7;      // 消息类型
+    bytes content = 8;           // 消息内容（JSON 字节）
+    int64 send_time = 9;         // 发送时间
+    int64 server_time = 10;      // 服务器时间
+    int64 seq = 11;              // 消息序列号（发送时为0，由服务端生成）
+    int32 status = 12;           // 消息状态（同步时使用）
+    bool is_read = 13;           // 是否已读（同步时使用）
+    int64 create_time = 14;      // 创建时间（客户端创建消息的时间）
+    map<string, string> extra = 15;
+}
+
 // 发送消息请求
 message SendMessageRequest {
-    string client_msg_id = 1;    // 客户端消息 ID
-    string conversation_id = 2;  // 会话 ID
-    string sender_id = 3;        // 发送者 ID
-    string receiver_id = 4;      // 接收者 ID（单聊）
-    string group_id = 5;         // 群组 ID（群聊）
-    int32 message_type = 6;      // 消息类型
-    bytes content = 7;           // 消息内容（JSON 字节）
-    int64 send_time = 8;         // 发送时间
-    map<string, string> extra = 10;
+    MessageInfo message = 1;     // ✅ 复用通用消息结构
 }
 
 // 发送消息响应
@@ -177,18 +188,7 @@ message SendMessageResponse {
 
 // 推送消息
 message PushMessage {
-    string message_id = 1;
-    string client_msg_id = 2;
-    string conversation_id = 3;
-    string sender_id = 4;
-    string receiver_id = 5;
-    string group_id = 6;
-    int32 message_type = 7;
-    bytes content = 8;
-    int64 send_time = 9;
-    int64 server_time = 10;
-    int64 seq = 11;
-    map<string, string> extra = 15;
+    MessageInfo message = 1;     // ✅ 复用通用消息结构
 }
 
 // 消息 ACK
@@ -237,27 +237,14 @@ message SyncRequest {
 message SyncResponse {
     ErrorCode error_code = 1;
     string error_msg = 2;
-    repeated MessageData messages = 3;  // 消息列表
+    repeated MessageInfo messages = 3;  // ✅ 使用通用消息结构
     int64 max_seq = 4;           // 本批消息的最大 seq
     bool has_more = 5;           // 是否还有更多消息
     int64 total_count = 6;       // 总共需要同步的消息数量
     int64 server_time = 7;       // 服务器时间
 }
 
-// 消息数据（用于同步响应）
-message MessageData {
-    string message_id = 1;
-    string conversation_id = 2;
-    string sender_id = 3;
-    int64 seq = 4;
-    int32 message_type = 5;
-    string content = 6;
-    int64 create_time = 7;
-    int64 server_time = 8;
-    int32 status = 9;
-    map<string, string> extra = 10;
-    bool is_read = 11;  // 当前用户是否已读该消息
-}
+// ✅ 移除 MessageData，统一使用 MessageInfo
 
 // 范围同步请求（用于补齐丢失的消息）
 message SyncRangeRequest {
@@ -272,7 +259,7 @@ message SyncRangeRequest {
 message SyncRangeResponse {
     ErrorCode error_code = 1;
     string error_msg = 2;
-    repeated MessageData messages = 3;  // 消息列表
+    repeated MessageInfo messages = 3;  // ✅ 使用通用消息结构
     int64 start_seq = 4;         // 本批起始 seq
     int64 end_seq = 5;           // 本批结束 seq
     bool has_more = 6;           // 是否还有更多消息

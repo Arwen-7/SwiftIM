@@ -77,6 +77,12 @@ public final class IMConversationManager {
         listeners.remove(listener)
     }
     
+    internal func getAllListeners() -> [IMConversationListener] {
+        listenerLock.lock()
+        defer { listenerLock.unlock() }
+        return listeners.allObjects.compactMap { $0 as? IMConversationListener }
+    }
+    
     /// 通知所有监听器
     private func notifyListeners(_ block: @escaping (IMConversationListener) -> Void) {
         listenerLock.lock()
@@ -178,7 +184,11 @@ public final class IMConversationManager {
         }
         
         // 保存到数据库
-        try? database.saveConversation(conv)
+        do {
+            try database.saveConversation(conv)
+        } catch {
+            IMLogger.shared.error("Failed to save conversation: \(error)")
+        }
         
         // 更新缓存
         conversationCache.set(conv, forKey: conversationID)
@@ -319,15 +329,10 @@ public final class IMConversationManager {
     /// 标记会话为已读
     /// - Parameter conversationID: 会话 ID
     public func markAsRead(conversationID: String) throws {
-        // 1. 获取未读消息ID列表（发送给服务端前需要知道哪些消息需要标记为已读）
-        let unreadMessages = try database.getMessages(conversationID: conversationID, limit: 100)
-            .filter { $0.direction == .receive && !$0.isRead }
-        let messageIDs = unreadMessages.map { $0.messageID }
-        
-        // 2. 更新数据库（本地立即更新，提升用户体验）
+        // 1. 更新数据库（本地立即更新，提升用户体验）
         try database.clearUnreadCount(conversationID: conversationID)
         
-        // 3. 更新内存缓存
+        // 2. 更新内存缓存
         if let conversation = getConversation(conversationID: conversationID) {
             conversation.unreadCount = 0
             conversationCache.set(conversation, forKey: conversationID)
@@ -336,32 +341,32 @@ public final class IMConversationManager {
             notifyListeners { $0.onConversationUpdated(conversation) }
         }
         
-        // 4. 通知未读数变化
+        // 3. 通知未读数变化
         notifyListeners { $0.onUnreadCountChanged(conversationID, count: 0) }
         
-        // 5. 通知总未读数变化
+        // 4. 通知总未读数变化
         let totalCount = database.getTotalUnreadCount()
         notifyListeners { $0.onTotalUnreadCountChanged(totalCount) }
         
-        // 6. 发送已读回执到服务端（多端同步）
-        if !messageIDs.isEmpty {
-            sendReadReceiptToServer(conversationID: conversationID, messageIDs: messageIDs)
-        }
+        // 5. 发送已读回执到服务端（多端同步）
+        // ✅ 只发送会话ID，让服务端批量标记该会话所有未读消息
+        sendReadReceiptToServer(conversationID: conversationID)
         
-        IMLogger.shared.info("Marked conversation as read: \(conversationID), messages: \(messageIDs.count)")
+        IMLogger.shared.info("Marked conversation as read: \(conversationID)")
     }
     
     /// 发送已读回执到服务端
-    private func sendReadReceiptToServer(conversationID: String, messageIDs: [String]) {
+    /// ✅ 优化：只发送会话ID，让服务端批量标记该会话所有未读消息
+    private func sendReadReceiptToServer(conversationID: String) {
         guard let client = IMClient.shared as? IMClient else {
             IMLogger.shared.warning("IMClient not available, skip sending read receipt")
             return
         }
         
-        // 创建已读回执请求
+        // 创建已读回执请求（messageIds 留空，服务端根据会话ID批量处理）
         var request = Im_Protocol_ReadReceiptRequest()
         request.conversationID = conversationID
-        request.messageIds = messageIDs
+        request.messageIds = []  // ✅ 空数组表示标记该会话所有未读消息
         
         do {
             let requestData = try request.serializedData()
@@ -370,7 +375,7 @@ public final class IMConversationManager {
             client.sendReadReceipt(requestData) { result in
                 switch result {
                 case .success:
-                    IMLogger.shared.debug("✅ Read receipt sent to server (conversation: \(conversationID), count: \(messageIDs.count))")
+                    IMLogger.shared.debug("✅ Read receipt sent to server (conversation: \(conversationID))")
                 case .failure(let error):
                     IMLogger.shared.error("❌ Failed to send read receipt: \(error)")
                 }

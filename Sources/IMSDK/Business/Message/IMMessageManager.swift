@@ -109,6 +109,13 @@ public final class IMMessageManager {
         listeners.remove(listener)
     }
     
+    /// 获取所有监听器（用于迁移）
+    internal func getAllListeners() -> [IMMessageListener] {
+        listenerLock.lock()
+        defer { listenerLock.unlock() }
+        return listeners.allObjects.compactMap { $0 as? IMMessageListener }
+    }
+    
     /// 通知所有监听器
     internal func notifyListeners(_ block: @escaping (IMMessageListener) -> Void) {
         listenerLock.lock()
@@ -274,19 +281,21 @@ public final class IMMessageManager {
     
     // MARK: - Message Encoding
     
-    /// 将 IMMessage 编码为 Protobuf 格式
+    /// 将 IMMessage 编码为 Protobuf 格式（✅ 使用 MessageInfo 结构）
     private func encodeMessageToProtobuf(_ message: IMMessage) throws -> Data {
         var sendRequest = Im_Protocol_SendMessageRequest()
-        sendRequest.clientMsgID = message.messageID
-        sendRequest.conversationID = message.conversationID
-        sendRequest.senderID = message.senderID
-        sendRequest.receiverID = message.receiverID
-        sendRequest.messageType = Int32(message.messageType.rawValue)
-        sendRequest.sendTime = message.sendTime
+        
+        // ✅ 通过 .message 访问 MessageInfo 字段
+        sendRequest.message.clientMsgID = message.messageID
+        sendRequest.message.conversationID = message.conversationID
+        sendRequest.message.senderID = message.senderID
+        sendRequest.message.receiverID = message.receiverID
+        sendRequest.message.messageType = Int32(message.messageType.rawValue)
+        sendRequest.message.sendTime = message.sendTime
         
         // 将消息内容编码为 JSON Data
         if let contentData = message.content.data(using: .utf8) {
-            sendRequest.content = contentData
+            sendRequest.message.content = contentData
         }
         
         // 编码为 Protobuf 数据

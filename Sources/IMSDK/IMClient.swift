@@ -467,6 +467,11 @@ public final class IMClient {
             }
         }
         
+        // ⚠️ 保存旧的监听器（避免因重新创建 manager 而丢失）
+        // 防止重新登录而丢失掉原监听者
+        let oldConversationListeners = conversationManager?.getAllListeners() ?? []
+        let oldMessageListeners = messageManager?.getAllListeners() ?? []
+        
         self.userManager = IMUserManager(
             database: database,
             httpManager: httpManager
@@ -492,6 +497,15 @@ public final class IMClient {
             userID: userID
         )
         
+        // ✅ 重新添加旧的监听器到新的 manager
+        for listener in oldConversationListeners {
+            conversationManager?.addListener(listener)
+        }
+        
+        for listener in oldMessageListeners {
+            messageManager?.addListener(listener)
+        }
+        
         // 添加登录前缓存的监听器
         addPendingListeners()
         
@@ -510,8 +524,6 @@ public final class IMClient {
                 return false
             }
         }
-
-        
         
         // 设置认证 Header
         httpManager.addHeader(name: "Authorization", value: "Bearer \(token)")
@@ -1082,20 +1094,24 @@ public final class IMClient {
             // 使用 Protobuf 解析推送消息
             let pushMsg = try Im_Protocol_PushMessage(serializedData: body)
             
-            IMLogger.shared.debug("Received push message: id=\(pushMsg.messageID), seq=\(pushMsg.seq)")
+            // ✅ 通过 .message 访问 MessageInfo 字段
+            let msgInfo = pushMsg.message
+            IMLogger.shared.debug("Received push message: id=\(msgInfo.messageID), seq=\(msgInfo.seq)")
             
             // 转换为 IMMessage
-            let contentString = String(data: pushMsg.content, encoding: .utf8) ?? ""
+            let contentString = String(data: msgInfo.content, encoding: .utf8) ?? ""
             let message = IMMessage()
-            message.messageID = pushMsg.messageID
-            message.conversationID = pushMsg.conversationID
-            message.messageType = IMMessageType(rawValue: Int(pushMsg.messageType)) ?? .text
+            message.messageID = msgInfo.messageID
+            message.conversationID = msgInfo.conversationID
+            message.messageType = IMMessageType(rawValue: Int(msgInfo.messageType)) ?? .text
             message.content = contentString
-            message.senderID = pushMsg.senderID
-            message.receiverID = pushMsg.receiverID.isEmpty ? "" : pushMsg.receiverID
-            message.sendTime = pushMsg.sendTime
+            message.senderID = msgInfo.senderID
+            message.receiverID = msgInfo.receiverID.isEmpty ? "" : msgInfo.receiverID
+            message.createTime = msgInfo.createTime  // ✅ 创建时间
+            message.sendTime = msgInfo.sendTime      // 发送时间
+            message.serverTime = msgInfo.serverTime  // ✅ 服务器时间
             message.status = .sent
-            message.seq = pushMsg.seq
+            message.seq = msgInfo.seq
             message.direction = .receive
             
             // 传递给消息管理器处理（会自动通知监听器）
@@ -1229,20 +1245,24 @@ public final class IMClient {
             
             IMLogger.shared.info("Received batch messages: count=\(batchMsg.messages.count)")
             
-            // 批量处理消息
+            // 批量处理消息（✅ 使用 MessageInfo 结构）
             var imMessages: [IMMessage] = []
             for pbMsg in batchMsg.messages {
-                let contentString = String(data: pbMsg.content, encoding: .utf8) ?? ""
+                // ✅ 通过 .message 访问 MessageInfo 字段
+                let msgInfo = pbMsg.message
+                let contentString = String(data: msgInfo.content, encoding: .utf8) ?? ""
                 let message = IMMessage()
-                message.messageID = pbMsg.messageID
-                message.conversationID = pbMsg.conversationID
-                message.messageType = IMMessageType(rawValue: Int(pbMsg.messageType)) ?? .text
+                message.messageID = msgInfo.messageID
+                message.conversationID = msgInfo.conversationID
+                message.messageType = IMMessageType(rawValue: Int(msgInfo.messageType)) ?? .text
                 message.content = contentString
-                message.senderID = pbMsg.senderID
-                message.receiverID = pbMsg.receiverID.isEmpty ? "" : pbMsg.receiverID
-                message.sendTime = pbMsg.sendTime
+                message.senderID = msgInfo.senderID
+                message.receiverID = msgInfo.receiverID.isEmpty ? "" : msgInfo.receiverID
+                message.createTime = msgInfo.createTime  // ✅ 创建时间
+                message.sendTime = msgInfo.sendTime      // 发送时间
+                message.serverTime = msgInfo.serverTime  // ✅ 服务器时间
                 message.status = .sent
-                message.seq = pbMsg.seq
+                message.seq = msgInfo.seq
                 message.direction = .receive
                 imMessages.append(message)
             }
@@ -1540,19 +1560,23 @@ extension IMClient: IMNetworkMonitorDelegate {
         }
     }
     
-    /// 处理 TCP 推送消息
+    /// 处理 TCP 推送消息（✅ 使用 MessageInfo 结构）
     private func handleTCPPushMessage(_ pushMsg: Im_Protocol_PushMessage) {
-        let contentString = String(data: pushMsg.content, encoding: .utf8) ?? ""
+        // ✅ 通过 .message 访问 MessageInfo 字段
+        let msgInfo = pushMsg.message
+        let contentString = String(data: msgInfo.content, encoding: .utf8) ?? ""
         let message = IMMessage()
-        message.messageID = pushMsg.messageID
-        message.conversationID = pushMsg.conversationID
-        message.messageType = IMMessageType(rawValue: Int(pushMsg.messageType)) ?? .text
+        message.messageID = msgInfo.messageID
+        message.conversationID = msgInfo.conversationID
+        message.messageType = IMMessageType(rawValue: Int(msgInfo.messageType)) ?? .text
         message.content = contentString
-        message.senderID = pushMsg.senderID
-        message.receiverID = pushMsg.receiverID.isEmpty ? "" : pushMsg.receiverID
-        message.sendTime = pushMsg.sendTime
+        message.senderID = msgInfo.senderID
+        message.receiverID = msgInfo.receiverID.isEmpty ? "" : msgInfo.receiverID
+        message.createTime = msgInfo.createTime  // ✅ 创建时间
+        message.sendTime = msgInfo.sendTime      // 发送时间
+        message.serverTime = msgInfo.serverTime  // ✅ 服务器时间
         message.status = .sent
-        message.seq = pushMsg.seq
+        message.seq = msgInfo.seq
         message.direction = .receive
         
         // 传递给消息管理器处理（会自动通知监听器）

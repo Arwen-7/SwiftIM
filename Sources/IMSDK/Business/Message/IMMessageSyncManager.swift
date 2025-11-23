@@ -623,30 +623,31 @@ extension IMMessageSyncManager {
             return
         }
         
-        // 转换为 IMMessage 对象
-        let messages = response.messages.compactMap { msgData -> IMMessage? in
-            guard !msgData.messageID.isEmpty,
-                  !msgData.conversationID.isEmpty,
-                  !msgData.senderID.isEmpty else {
+        // 转换为 IMMessage 对象（✅ 使用 MessageInfo 结构）
+        let messages = response.messages.compactMap { msgInfo -> IMMessage? in
+            guard !msgInfo.messageID.isEmpty,
+                  !msgInfo.conversationID.isEmpty,
+                  !msgInfo.senderID.isEmpty else {
                 return nil
             }
             
             let message = IMMessage()
-            message.messageID = msgData.messageID
-            message.conversationID = msgData.conversationID
-            message.senderID = msgData.senderID
-            message.seq = msgData.seq
-            message.messageType = IMMessageType(rawValue: Int(msgData.messageType)) ?? .text
-            message.content = msgData.content
-            message.createTime = msgData.createTime
-            message.serverTime = msgData.serverTime
-            message.status = IMMessageStatus(rawValue: Int(msgData.status)) ?? .sent
+            message.messageID = msgInfo.messageID
+            message.conversationID = msgInfo.conversationID
+            message.senderID = msgInfo.senderID
+            message.seq = msgInfo.seq
+            message.messageType = IMMessageType(rawValue: Int(msgInfo.messageType)) ?? .text
+            message.content = String(data: msgInfo.content, encoding: .utf8) ?? ""  // ✅ Data -> String
+            message.createTime = msgInfo.createTime  // ✅ 创建时间
+            message.serverTime = msgInfo.serverTime
+            message.sendTime = msgInfo.sendTime      // ✅ 发送时间（UI显示）
+            message.status = IMMessageStatus(rawValue: Int(msgInfo.status)) ?? .sent
             
             // ✅ 根据 senderID 判断消息方向
-            message.direction = (msgData.senderID == self.userID) ? .send : .receive
+            message.direction = (msgInfo.senderID == self.userID) ? .send : .receive
             
             // ✅ 使用服务端返回的已读状态
-            message.isRead = msgData.isRead
+            message.isRead = msgInfo.isRead
             
             return message
         }
@@ -789,30 +790,31 @@ extension IMMessageSyncManager {
             return
         }
         
-        // 转换为 IMMessage 对象
-        let messages = response.messages.compactMap { msgData -> IMMessage? in
-            guard !msgData.messageID.isEmpty,
-                  !msgData.conversationID.isEmpty,
-                  !msgData.senderID.isEmpty else {
+        // 转换为 IMMessage 对象（✅ 使用 MessageInfo 结构）
+        let messages = response.messages.compactMap { msgInfo -> IMMessage? in
+            guard !msgInfo.messageID.isEmpty,
+                  !msgInfo.conversationID.isEmpty,
+                  !msgInfo.senderID.isEmpty else {
                 return nil
             }
             
             let message = IMMessage()
-            message.messageID = msgData.messageID
-            message.conversationID = msgData.conversationID
-            message.senderID = msgData.senderID
-            message.seq = msgData.seq
-            message.messageType = IMMessageType(rawValue: Int(msgData.messageType)) ?? .text
-            message.content = msgData.content
-            message.createTime = msgData.createTime
-            message.serverTime = msgData.serverTime
-            message.status = IMMessageStatus(rawValue: Int(msgData.status)) ?? .sent
+            message.messageID = msgInfo.messageID
+            message.conversationID = msgInfo.conversationID
+            message.senderID = msgInfo.senderID
+            message.seq = msgInfo.seq
+            message.messageType = IMMessageType(rawValue: Int(msgInfo.messageType)) ?? .text
+            message.content = String(data: msgInfo.content, encoding: .utf8) ?? ""  // ✅ Data -> String
+            message.createTime = msgInfo.createTime  // ✅ 创建时间
+            message.serverTime = msgInfo.serverTime
+            message.sendTime = msgInfo.sendTime      // ✅ 发送时间（UI显示）
+            message.status = IMMessageStatus(rawValue: Int(msgInfo.status)) ?? .sent
             
             // ✅ 根据 senderID 判断消息方向
-            message.direction = (msgData.senderID == self.userID) ? .send : .receive
+            message.direction = (msgInfo.senderID == self.userID) ? .send : .receive
             
             // ✅ 使用服务端返回的已读状态
-            message.isRead = msgData.isRead
+            message.isRead = msgInfo.isRead
             
             return message
         }
