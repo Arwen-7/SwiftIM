@@ -37,29 +37,21 @@ public final class IMMessageSyncManager {
     /// 当前同步任务
     private var currentSyncTask: DispatchWorkItem?
     
-    /// 当前同步批次上下文（保护并发，一次只能有一个待处理的同步请求）
-    private var currentBatchContext: SyncBatchContext?
-    private let batchContextLock = NSLock()
+    /// 当前批量同步上下文
+    private var currentBatchSyncContext: BatchSyncContext?
+    private let batchSyncContextLock = NSLock()
     
-    /// 同步批次上下文
-    internal class SyncBatchContext {
-        let id: UUID  // 唯一标识，用于超时判断
-        let lastSeq: Int64
-        let totalFetched: Int
-        let totalCount: Int64
-        let currentBatch: Int
-        let retryCount: Int
+    /// 批量同步上下文
+    internal class BatchSyncContext {
+        let id: UUID
         let startTime: Date
+        let retryCount: Int  // 重试次数
         var timeoutTimer: Timer?  // 超时定时器
         
-        init(id: UUID, lastSeq: Int64, totalFetched: Int, totalCount: Int64, currentBatch: Int, retryCount: Int, startTime: Date) {
+        init(id: UUID, startTime: Date, retryCount: Int = 0) {
             self.id = id
-            self.lastSeq = lastSeq
-            self.totalFetched = totalFetched
-            self.totalCount = totalCount
-            self.currentBatch = currentBatch
-            self.retryCount = retryCount
             self.startTime = startTime
+            self.retryCount = retryCount
         }
         
         /// 取消定时器
@@ -72,29 +64,6 @@ public final class IMMessageSyncManager {
             cancelTimer()
         }
     }
-    
-    /// 范围同步上下文（用于重试）
-    private class SyncRangeContext {
-        let requestId: String        // 请求唯一标识
-        let conversationID: String?
-        let startSeq: Int64
-        let endSeq: Int64
-        let retryCount: Int
-        let retryHandler: (() -> Void)?  // 重试回调
-        
-        init(requestId: String, conversationID: String?, startSeq: Int64, endSeq: Int64, retryCount: Int, retryHandler: (() -> Void)?) {
-            self.requestId = requestId
-            self.conversationID = conversationID
-            self.startSeq = startSeq
-            self.endSeq = endSeq
-            self.retryCount = retryCount
-            self.retryHandler = retryHandler
-        }
-    }
-    
-    /// 保存正在进行的范围同步请求（key: requestId）
-    private var syncRangeContexts = [String: SyncRangeContext]()
-    private let rangeContextLock = NSLock()
     
     // MARK: - Initialization
     
@@ -130,11 +99,11 @@ public final class IMMessageSyncManager {
             currentSyncTask?.cancel()
             currentSyncTask = nil
             
-            // 清理旧的 context（包括取消定时器），避免旧响应被处理
-            batchContextLock.lock()
-            currentBatchContext?.cancelTimer()
-            currentBatchContext = nil
-            batchContextLock.unlock()
+            // 清理旧的批量同步上下文（取消定时器）
+            batchSyncContextLock.lock()
+            currentBatchSyncContext?.cancelTimer()
+            currentBatchSyncContext = nil
+            batchSyncContextLock.unlock()
         }
         
         // 更新状态
@@ -151,7 +120,7 @@ public final class IMMessageSyncManager {
         IMLogger.shared.info("🔄 Sync started for user: \(userID)")
     }
     
-    /// 停止同步
+    /// 停止同步（只停止批量同步，不影响范围同步）
     public func stopSync() {
         stateLock.lock()
         defer { stateLock.unlock() }
@@ -159,11 +128,11 @@ public final class IMMessageSyncManager {
         currentSyncTask?.cancel()
         currentSyncTask = nil
         
-        // 清理同步上下文（包括取消定时器）
-        batchContextLock.lock()
-        currentBatchContext?.cancelTimer()
-        currentBatchContext = nil
-        batchContextLock.unlock()
+        // 清理批量同步上下文（取消定时器）
+        batchSyncContextLock.lock()
+        currentBatchSyncContext?.cancelTimer()
+        currentBatchSyncContext = nil
+        batchSyncContextLock.unlock()
         
         updateState(.idle)
         
@@ -173,30 +142,25 @@ public final class IMMessageSyncManager {
         IMLogger.shared.info("⏸️ Sync stopped for user: \(userID)")
     }
     
-    /// 从指定序列号开始增量同步（重连后使用）
-    /// - Parameter fromSeq: 起始序列号
-    public func sync(fromSeq: Int64) {
-        stateLock.lock()
-        
-        // 检查是否已在同步中
-        if case .syncing = state {
-            stateLock.unlock()
-            IMLogger.shared.warning("Sync already in progress, skip")
-            return
+    /// 清理所有范围同步（内部方法，供登出或切换账号时使用）
+    internal func clearAllRangeSync() {
+        // 清理所有范围同步上下文（取消定时器）
+        Self.rangeContextLock.lock()
+        for context in Self.syncRangeContexts.values {
+            context.cancelTimer()
         }
+        Self.syncRangeContexts.removeAll()
+        Self.rangeContextLock.unlock()
         
-        // 更新状态
-        updateState(.syncing)
-        stateLock.unlock()
-        
-        IMLogger.shared.info("🔄 Starting incremental sync from seq: \(fromSeq)")
-        
-        // 在后台线程执行同步
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            
-            self.performIncrementalSync(fromSeq: fromSeq)
+        // 取消所有待执行的范围同步重试任务
+        Self.retryTaskLock.lock()
+        for task in Self.pendingRetryTasks.values {
+            task.cancel()
         }
+        Self.pendingRetryTasks.removeAll()
+        Self.retryTaskLock.unlock()
+        
+        IMLogger.shared.debug("🧹 All range sync tasks cleared")
     }
     
     /// 重置同步（清空本地 seq，重新全量同步）
@@ -208,11 +172,11 @@ public final class IMMessageSyncManager {
         currentSyncTask?.cancel()
         currentSyncTask = nil
         
-        // 清理同步上下文（包括取消定时器）
-        batchContextLock.lock()
-        currentBatchContext?.cancelTimer()
-        currentBatchContext = nil
-        batchContextLock.unlock()
+        // 清理批量同步上下文（取消定时器）
+        batchSyncContextLock.lock()
+        currentBatchSyncContext?.cancelTimer()
+        currentBatchSyncContext = nil
+        batchSyncContextLock.unlock()
         
         do {
             // 重置同步配置
@@ -237,253 +201,163 @@ public final class IMMessageSyncManager {
     
     // MARK: - Private Methods
     
-    /// 执行增量同步（从指定 seq 开始）
-    private func performIncrementalSync(fromSeq: Int64) {
-        let startTime = Date()
-        
-        IMLogger.shared.info("📊 Starting incremental sync from seq: \(fromSeq)")
-        
-        // 设置同步状态
-        do {
-            try database.setSyncingState(userID: userID, isSyncing: true)
-        } catch {
-            IMLogger.shared.error("Failed to set syncing state: \(error)")
-        }
-        
-        // 开始分批同步（从指定 seq 开始）
-        syncBatch(
-            lastSeq: fromSeq,
-            totalFetched: 0,
-            totalCount: 0,
-            currentBatch: 1,
-            retryCount: 0,
-            startTime: startTime
-        )
-    }
-    
-    /// 执行同步
-    private func performSync() {
-        let startTime = Date()
-        
-        // 获取本地最后同步的 seq
-        let syncConfig = database.getSyncConfig(userID: userID)
-        let lastSeq = syncConfig?.lastSyncSeq ?? 0
-        
-        if lastSeq == 0 {
-            IMLogger.shared.info("📊 Starting FULL sync (lastSeq=0, first time sync)")
-        } else {
-            IMLogger.shared.info("📊 Starting INCREMENTAL sync from seq: \(lastSeq)")
-        }
-        
-        // 设置同步状态
-        do {
-            try database.setSyncingState(userID: userID, isSyncing: true)
-        } catch {
-            IMLogger.shared.error("Failed to set syncing state: \(error)")
-        }
-        
-        // 开始分批同步
-        syncBatch(
-            lastSeq: lastSeq,
-            totalFetched: 0,
-            totalCount: 0,
-            currentBatch: 1,
-            retryCount: 0,
-            startTime: startTime
-        )
-    }
-    
-    /// 同步一批消息
-    private func syncBatch(
-        lastSeq: Int64,
-        totalFetched: Int,
-        totalCount: Int64,
-        currentBatch: Int,
-        retryCount: Int,
-        startTime: Date
-    ) {
-        // 检查是否已取消
-        guard currentSyncTask?.isCancelled == false else {
-            IMLogger.shared.warning("Sync task cancelled")
+    /// 执行同步（批量同步：一次请求完成所有会话同步）
+    private func performSync(retryCount: Int = 0) {
+        // ✅ 检查 currentSyncTask 是否被取消（用于重试场景）
+        if let task = currentSyncTask, task.isCancelled {
+            IMLogger.shared.debug("Sync task was cancelled, skip execution")
             return
         }
         
-        IMLogger.shared.debug("📦 Fetching batch \(currentBatch), lastSeq: \(lastSeq), count: \(batchSize)")
+        let startTime = Date()
         
-        // 保存当前批次上下文
-        let context = SyncBatchContext(
-            id: UUID(),  // 生成唯一标识
-            lastSeq: lastSeq,
-            totalFetched: totalFetched,
-            totalCount: totalCount,
-            currentBatch: currentBatch,
-            retryCount: retryCount,
-            startTime: startTime
+        IMLogger.shared.info("📊 Starting batch sync (retry: \(retryCount))")
+        
+        // 设置同步状态
+        do {
+            try database.setSyncingState(userID: userID, isSyncing: true)
+        } catch {
+            IMLogger.shared.error("Failed to set syncing state: \(error)")
+        }
+        
+        // 保存批量同步上下文
+        let context = BatchSyncContext(
+            id: UUID(),
+            startTime: startTime,
+            retryCount: retryCount
         )
         
-        batchContextLock.lock()
-        // 取消旧 context 的定时器
-        currentBatchContext?.cancelTimer()
-        currentBatchContext = context
-        batchContextLock.unlock()
+        batchSyncContextLock.lock()
+        currentBatchSyncContext = context
+        batchSyncContextLock.unlock()
         
-        // 发送同步请求（不等待响应）
-        syncMessages(lastSeq: lastSeq, count: batchSize, context: context)
+        // 发送批量同步请求（不等待响应）
+        sendBatchSyncRequest(context: context)
     }
     
-    /// 处理同步成功
-        private func handleSyncSuccess(
-            response: IMSyncResponse,
-            totalFetched: Int,
-            totalCount: Int64,
-            currentBatch: Int,
-            startTime: Date
-        ) {
-        do {
-            // 1. 检测批量消息中的 seq 丢失
-            if !response.messages.isEmpty {
-                let lossInfoList = messageManager.checkBatchMessageLoss(messages: response.messages)
+    /// 发送批量同步请求
+    private func sendBatchSyncRequest(context: BatchSyncContext) {
+        // 从数据库获取同步配置，读取每个会话的 lastSeq
+        let syncConfig = database.getSyncConfig(userID: userID)
+        var conversationStates: [Im_Protocol_ConversationSyncState] = []
+        
+        if let config = syncConfig, !config.conversationStates.isEmpty {
+            // 有本地状态，发送增量同步请求
+            for (conversationID, state) in config.conversationStates {
+                var protoState = Im_Protocol_ConversationSyncState()
+                protoState.conversationID = conversationID
+                protoState.lastSeq = state.maxSeq
+                conversationStates.append(protoState)
+            }
+            IMLogger.shared.info("📤 Sending batch sync request (incremental) with \(conversationStates.count) conversation states")
+        } else {
+            // 无本地状态，发送全量同步请求（conversationStates 为空）
+            IMLogger.shared.info("📤 Sending batch sync request (full sync)")
+        }
+        
+        // 构造批量同步请求
+        var request = Im_Protocol_BatchSyncRequest()
+        request.conversationStates = conversationStates
+        request.maxCountPerConversation = 100  // 每个会话最多100条
+        
+        // 序列化
+        guard let requestData = try? request.serializedData() else {
+            IMLogger.shared.error("Failed to serialize batch sync request")
+            handleBatchSyncFailure(error: IMError.invalidData, contextID: context.id)
+            return
+        }
+        
+        // 发送请求（不等待响应，响应会通过 handleBatchSyncResponse 处理）
+        onSendData?(requestData, .batchSyncReq) { [weak self, weak context] result in
+            guard let self = self, let context = context else { return }
+            
+            switch result {
+            case .success:
+                IMLogger.shared.debug("Batch sync request sent")
                 
-                if !lossInfoList.isEmpty {
-                    IMLogger.shared.warning("""
-                        ⚠️ 批量同步中检测到 \(lossInfoList.count) 个会话的消息丢失：
-                        \(lossInfoList.map { "[\($0.conversationID): gap=\($0.lossCount)]" }.joined(separator: ", "))
-                        """)
-                    // 注：批量同步中检测到的 gap 通常是服务器侧问题，记录日志即可
-                    // 不需要触发补拉，因为补拉也可能返回同样的结果
+                // 启动超时定时器（30秒）
+                let timer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: false) { [weak self, weak context] _ in
+                    guard let self = self, let context = context else { return }
+                    
+                    // 检查 context 是否匹配（避免超时处理错误的请求）
+                    self.batchSyncContextLock.lock()
+                    let shouldTimeout = self.currentBatchSyncContext?.id == context.id
+                    self.batchSyncContextLock.unlock()
+                    
+                    if shouldTimeout {
+                        IMLogger.shared.warning("Batch sync request timeout (contextID: \(context.id))")
+                        self.handleBatchSyncFailure(error: IMError.timeout, contextID: context.id)
+                    } else {
+                        IMLogger.shared.debug("Timeout fired but context already changed, ignore (contextID: \(context.id))")
+                    }
                 }
-            }
-            
-            // 2. 保存消息到数据库（去重）
-            if !response.messages.isEmpty {
-                try database.saveMessages(response.messages)
                 
-                IMLogger.shared.info("💾 Batch \(currentBatch) saved: \(response.messages.count) messages")
+                // 保存定时器到 context
+                context.timeoutTimer = timer
                 
-                // ✅ 通知 messageManager 批量处理同步的消息（会触发 UI 更新）
-                messageManager.handleSyncedMessages(response.messages)
+            case .failure(let error):
+                IMLogger.shared.error("Failed to send batch sync request: \(error)")
+                self.handleBatchSyncFailure(error: error, contextID: context.id)
             }
-            
-            // 3. 更新 lastSyncSeq
-            if response.maxSeq > 0 {
-                try database.updateLastSyncSeq(userID: userID, seq: response.maxSeq)
-                IMLogger.shared.info("✅ Updated lastSyncSeq to: \(response.maxSeq)")
-            } else {
-                IMLogger.shared.warning("⚠️ Sync response maxSeq=0, skip updating lastSyncSeq")
-            }
-            
-            // 3. 计算进度
-            let newTotalFetched = totalFetched + response.messages.count
-            let progress = IMSyncProgress(
-                currentCount: newTotalFetched,
-                totalCount: totalCount,
-                currentBatch: currentBatch
-            )
-            
-            // 4. 通知进度
-            DispatchQueue.main.async {
-                self.onProgress?(progress)
-            }
-            
-            IMLogger.shared.debug("📈 Progress: \(Int(progress.progress * 100))% (\(newTotalFetched)/\(totalCount))")
-            
-            // 5. 检查是否还有更多
-            if response.hasMore {
-                // 继续拉取下一批
-                syncBatch(
-                    lastSeq: response.maxSeq,
-                    totalFetched: newTotalFetched,
-                    totalCount: totalCount,
-                    currentBatch: currentBatch + 1,
-                    retryCount: 0,  // 重置重试次数
-                    startTime: startTime
-                )
-            } else {
-                // 同步完成
-                handleSyncCompleted(
-                    totalFetched: newTotalFetched,
-                    totalBatches: currentBatch,
-                    startTime: startTime
-                )
-            }
-            
-        } catch {
-            IMLogger.shared.error("Failed to save sync data: \(error)")
-            handleSyncError(
-                error: error,
-                lastSeq: response.maxSeq,
-                totalFetched: totalFetched,
-                totalCount: totalCount,
-                currentBatch: currentBatch,
-                retryCount: 0,
-                startTime: startTime
-            )
         }
     }
     
-    /// 处理同步错误
-    private func handleSyncError(
-        error: Error,
-        lastSeq: Int64,
-        totalFetched: Int,
-        totalCount: Int64,
-        currentBatch: Int,
-        retryCount: Int,
-        startTime: Date
-    ) {
-        IMLogger.shared.error("❌ Sync batch \(currentBatch) failed: \(error)")
+    /// 处理批量同步失败
+    private func handleBatchSyncFailure(error: Error, contextID: UUID) {
+        batchSyncContextLock.lock()
+        guard let context = currentBatchSyncContext, context.id == contextID else {
+            batchSyncContextLock.unlock()
+            IMLogger.shared.debug("handleBatchSyncFailure: context mismatch")
+            return
+        }
+        // 取消超时定时器
+        context.cancelTimer()
+        let retryCount = context.retryCount
+        currentBatchSyncContext = nil
+        batchSyncContextLock.unlock()
+        
+        IMLogger.shared.error("❌ Batch sync failed (retry: \(retryCount)): \(error)")
         
         // 判断是否需要重试
         if retryCount < maxRetryCount {
             let delay = Double(retryCount + 1) * 2.0  // 2s, 4s, 6s
             
-            IMLogger.shared.warning("⏳ Retrying in \(delay) seconds... (attempt \(retryCount + 1)/\(maxRetryCount))")
+            IMLogger.shared.warning("⏳ Retrying batch sync in \(delay) seconds... (attempt \(retryCount + 1)/\(maxRetryCount))")
             
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + delay) { [weak self] in
-                self?.syncBatch(
-                    lastSeq: lastSeq,
-                    totalFetched: totalFetched,
-                    totalCount: totalCount,
-                    currentBatch: currentBatch,
-                    retryCount: retryCount + 1,
-                    startTime: startTime
-                )
+            // ✅ 使用 DispatchWorkItem 创建可取消的重试任务
+            let retryTask = DispatchWorkItem { [weak self] in
+                // 检查任务是否被取消
+                guard let self = self else { return }
+                
+                // 再次检查状态，确保用户没有主动停止同步
+                self.stateLock.lock()
+                let currentState = self.state
+                self.stateLock.unlock()
+                
+                // 只有在非空闲状态下才执行重试
+                if case .idle = currentState {
+                    IMLogger.shared.debug("Retry cancelled because sync was stopped")
+                    return
+                }
+                
+                self.performSync(retryCount: retryCount + 1)
             }
+            
+            // 保存到 currentSyncTask，以便可以被 stopSync() 取消
+            stateLock.lock()
+            currentSyncTask = retryTask
+            stateLock.unlock()
+            
+            // 延迟执行
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + delay, execute: retryTask)
         } else {
             // 重试次数耗尽，同步失败
+            IMLogger.shared.error("💔 Batch sync failed after \(maxRetryCount) retries: \(error)")
             updateState(.failed(error))
             
-            // 更新数据库同步状态
+            // 清理同步状态
             try? database.setSyncingState(userID: userID, isSyncing: false)
-            
-            IMLogger.shared.error("💔 Sync failed after \(maxRetryCount) retries: \(error)")
         }
-    }
-    
-    /// 处理同步完成
-    private func handleSyncCompleted(
-        totalFetched: Int,
-        totalBatches: Int,
-        startTime: Date
-    ) {
-        let duration = Date().timeIntervalSince(startTime)
-        
-        // 更新状态
-        updateState(.completed)
-        
-        // 更新数据库同步状态
-        do {
-            try database.setSyncingState(userID: userID, isSyncing: false)
-        } catch {
-            IMLogger.shared.error("Failed to update syncing state: \(error)")
-        }
-        
-        // 记录性能指标
-        let throughput = duration > 0 ? Double(totalFetched) / duration : 0
-        IMLogger.shared.info("✅ Sync completed: \(totalFetched) messages, \(totalBatches) batches, \(String(format: "%.2f", duration))s, \(String(format: "%.0f", throughput)) msg/s")
-        
-        // 性能监控（暂未实现）
-        // IMLogger.performanceMonitor.recordAPILatency("syncMessages", duration: duration)
     }
     
     /// 更新状态
@@ -496,216 +370,64 @@ public final class IMMessageSyncManager {
     }
 }
 
-// MARK: - Private Helper Methods
-
-private extension IMMessageSyncManager {
-    
-    /// 发送同步请求（不等待响应）
-    /// - Parameters:
-    ///   - lastSeq: 上次同步的最大 seq
-    ///   - count: 本次拉取数量
-    ///   - context: 同步批次上下文
-    func syncMessages(lastSeq: Int64, count: Int, context: SyncBatchContext) {
-        guard isConnected?() == true else {
-            IMLogger.shared.error("Transport not connected, sync failed")
-            handleSyncFailure(error: IMError.notConnected, contextID: context.id)
-            return
-        }
-        
-        guard let sendData = onSendData else {
-            IMLogger.shared.error("onSendData callback not set")
-            handleSyncFailure(error: IMError.notInitialized, contextID: context.id)
-            return
-        }
-        
-        // 创建同步请求（使用 Protobuf）
-        var syncReq = Im_Protocol_SyncRequest()
-        syncReq.lastSeq = lastSeq
-        syncReq.count = Int32(count)
-        syncReq.timestamp = IMUtils.currentTimeMillis()
-        
-        do {
-            let requestData = try syncReq.serializedData()
-            
-            // 发送同步请求（通过闭包，序列号由 transport 内部生成）
-            sendData(requestData, .syncReq) { [weak self] result in
-                guard let self = self else { return }
-                
-                switch result {
-                case .success:
-                    IMLogger.shared.debug("Sync request sent via long connection (lastSeq=\(lastSeq), count=\(count))")
-                    
-                    // 启动超时定时器（30秒）
-                    let timer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: false) { [weak self, weak context] _ in
-                        guard let self = self, let context = context else { return }
-                        
-                        // 检查 context 是否匹配（避免超时处理错误的请求）
-                        self.batchContextLock.lock()
-                        let shouldTimeout = self.currentBatchContext?.id == context.id
-                        self.batchContextLock.unlock()
-                        
-                        if shouldTimeout {
-                            IMLogger.shared.warning("Sync request timeout (contextID: \(context.id))")
-                            self.handleSyncFailure(error: IMError.timeout, contextID: context.id)
-                        } else {
-                            IMLogger.shared.debug("Timeout fired but context already changed, ignore (contextID: \(context.id))")
-                        }
-                    }
-                    
-                    // 保存定时器到 context
-                    context.timeoutTimer = timer
-                    
-                case .failure(let error):
-                    IMLogger.shared.error("Failed to send sync request: \(error)")
-                    self.handleSyncFailure(error: error, contextID: context.id)
-                }
-            }
-        } catch {
-            IMLogger.shared.error("Failed to serialize sync request: \(error)")
-            handleSyncFailure(error: error, contextID: context.id)
-        }
-    }
-    
-    /// 处理同步失败
-    /// - Parameters:
-    ///   - error: 错误信息
-    ///   - contextID: 上下文唯一标识（用于验证是否是当前请求）
-    private func handleSyncFailure(error: Error, contextID: UUID) {
-        batchContextLock.lock()
-        guard let context = currentBatchContext, context.id == contextID else {
-            batchContextLock.unlock()
-            IMLogger.shared.debug("handleSyncFailure: context mismatch or already cleared (contextID: \(contextID))")
-            return
-        }
-        // 取消定时器
-        context.cancelTimer()
-        currentBatchContext = nil
-        batchContextLock.unlock()
-        
-        // 处理错误（重试或失败）
-        handleSyncError(
-            error: error,
-            lastSeq: context.lastSeq,
-            totalFetched: context.totalFetched,
-            totalCount: context.totalCount,
-            currentBatch: context.currentBatch,
-            retryCount: context.retryCount,
-            startTime: context.startTime
-        )
-    }
-}
-
-// MARK: - Internal Methods for Response Handling
-
-extension IMMessageSyncManager {
-    
-    /// 处理长连接同步响应（由 IMClient 通过 messageRouter 调用）
-    /// - Parameters:
-    ///   - response: 同步响应（Protobuf）
-    ///   - sequence: 序列号（用于日志）
-    internal func handleSyncResponse(_ response: Im_Protocol_SyncResponse, sequence: UInt32) {
-        batchContextLock.lock()
-        guard let context = currentBatchContext else {
-            batchContextLock.unlock()
-            IMLogger.shared.warning("Received sync response but no pending request (seq=\(sequence))")
-            return
-        }
-        // 取消定时器（请求已完成）
-        context.cancelTimer()
-        currentBatchContext = nil
-        batchContextLock.unlock()
-        
-        // 检查错误码
-        guard response.errorCode == .errSuccess else {
-            IMLogger.shared.error("Sync response error: \(response.errorMsg)")
-            handleSyncError(
-                error: IMError.unknown(response.errorMsg),
-                lastSeq: context.lastSeq,
-                totalFetched: context.totalFetched,
-                totalCount: context.totalCount,
-                currentBatch: context.currentBatch,
-                retryCount: context.retryCount,
-                startTime: context.startTime
-            )
-            return
-        }
-        
-        // 转换为 IMMessage 对象（✅ 使用 MessageInfo 结构）
-        let messages = response.messages.compactMap { msgInfo -> IMMessage? in
-            guard !msgInfo.serverMsgID.isEmpty,
-                  !msgInfo.conversationID.isEmpty,
-                  !msgInfo.senderID.isEmpty else {
-                return nil
-            }
-            
-            let message = IMMessage()
-            message.serverMsgID = msgInfo.serverMsgID  // ✅ 服务端消息 ID
-            // ✅ 如果没有 clientMsgID，生成一个（用于作为数据库主键）
-            message.clientMsgID = msgInfo.clientMsgID.isEmpty ? IMUtils.generateUUID() : msgInfo.clientMsgID
-            message.conversationID = msgInfo.conversationID
-            message.senderID = msgInfo.senderID
-            message.seq = msgInfo.seq
-            message.messageType = IMMessageType(rawValue: Int(msgInfo.messageType)) ?? .text
-            message.content = String(data: msgInfo.content, encoding: .utf8) ?? ""  // ✅ Data -> String
-            message.createTime = msgInfo.createTime  // ✅ 创建时间
-            message.serverTime = msgInfo.serverTime
-            message.sendTime = msgInfo.sendTime      // ✅ 发送时间（UI显示）
-            message.status = IMMessageStatus(rawValue: Int(msgInfo.status)) ?? .sent
-            
-            // ✅ 根据 senderID 判断消息方向
-            message.direction = (msgInfo.senderID == self.userID) ? .send : .receive
-            
-            // ✅ 使用服务端返回的已读状态
-            message.isRead = msgInfo.isRead
-            
-            return message
-        }
-        
-        let syncResponse = IMSyncResponse(
-            messages: messages,
-            maxSeq: response.maxSeq,
-            hasMore: response.hasMore_p,
-            totalCount: response.totalCount
-        )
-        
-        IMLogger.shared.info("Sync response received (seq=\(sequence), messages=\(messages.count), maxSeq=\(response.maxSeq), hasMore=\(response.hasMore_p))")
-        
-        // 继续处理同步成功
-        handleSyncSuccess(
-            response: syncResponse,
-            totalFetched: context.totalFetched,
-            totalCount: context.totalCount > 0 ? context.totalCount : syncResponse.totalCount,
-            currentBatch: context.currentBatch,
-            startTime: context.startTime
-        )
-    }
-}
-
 // MARK: - Range Sync (范围同步，用于补拉丢失的消息)
 
 extension IMMessageSyncManager {
     
+    /// 范围同步上下文（用于超时管理）
+    private class SyncRangeContext {
+        let requestId: String
+        let conversationID: String
+        let startSeq: Int64
+        let endSeq: Int64
+        let retryCount: Int
+        var timeoutTimer: Timer?
+        
+        init(requestId: String, conversationID: String, startSeq: Int64, endSeq: Int64, retryCount: Int) {
+            self.requestId = requestId
+            self.conversationID = conversationID
+            self.startSeq = startSeq
+            self.endSeq = endSeq
+            self.retryCount = retryCount
+        }
+        
+        func cancelTimer() {
+            timeoutTimer?.invalidate()
+            timeoutTimer = nil
+        }
+        
+        deinit {
+            cancelTimer()
+        }
+    }
+    
+    /// 保存正在进行的范围同步请求（key: requestId）
+    private static var syncRangeContexts = [String: SyncRangeContext]()
+    private static let rangeContextLock = NSLock()
+    
+    /// 保存待执行的重试任务（key: "conversationID_startSeq_endSeq"）
+    private static var pendingRetryTasks = [String: DispatchWorkItem]()
+    private static let retryTaskLock = NSLock()
+    
     /// 同步指定 seq 范围的消息（用于补拉丢失的消息）
     /// - Parameters:
-    ///   - conversationID: 会话 ID（可选，如果指定则只同步该会话）
+    ///   - conversationID: 会话 ID（必填）
     ///   - startSeq: 起始 seq（包含）
     ///   - endSeq: 结束 seq（包含）
-    ///   - retryCount: 重试次数
-    ///   - retryHandler: 重试回调（失败时调用）
+    ///   - retryCount: 重试次数（内部使用）
     public func syncMessagesInRange(
-        conversationID: String? = nil,
+        conversationID: String,
         startSeq: Int64,
         endSeq: Int64,
-        retryCount: Int = 0,
-        retryHandler: (() -> Void)? = nil
+        retryCount: Int = 0
     ) {
         // 生成唯一请求ID
         let requestId = UUID().uuidString
         
         IMLogger.shared.info("""
-            🔄 范围同步消息（长连接）：
+            🔄 范围同步消息：
             - 请求ID: \(requestId)
-            - 会话: \(conversationID ?? "全局")
+            - 会话: \(conversationID)
             - seq 范围: [\(startSeq), \(endSeq)]
             - 预计数量: \(endSeq - startSeq + 1)
             - 重试次数: \(retryCount)
@@ -713,151 +435,378 @@ extension IMMessageSyncManager {
         
         // 检查连接状态
         guard isConnected?() == true else {
-            IMLogger.shared.error("连接未建立，无法发送范围同步请求")
-            // 触发重试
-            retryHandler?()
+            IMLogger.shared.error("连接未建立，无法发送范围同步请求（等待连接恢复后重新触发）")
             return
         }
         
-        // 保存上下文（用于响应回来时重试）
+        // 保存上下文
         let context = SyncRangeContext(
             requestId: requestId,
             conversationID: conversationID,
             startSeq: startSeq,
             endSeq: endSeq,
-            retryCount: retryCount,
-            retryHandler: retryHandler
+            retryCount: retryCount
         )
         
-        rangeContextLock.lock()
-        syncRangeContexts[requestId] = context  // ✅ 直接用 requestId 作为 key
-        rangeContextLock.unlock()
+        Self.rangeContextLock.lock()
+        Self.syncRangeContexts[requestId] = context
+        Self.rangeContextLock.unlock()
         
-        // 创建范围同步请求（使用 Protobuf）
+        // 创建范围同步请求
         var syncRangeReq = Im_Protocol_SyncRangeRequest()
-        syncRangeReq.requestID = requestId  // ✅ 设置 requestId
+        syncRangeReq.requestID = requestId
+        syncRangeReq.conversationID = conversationID
         syncRangeReq.startSeq = startSeq
         syncRangeReq.endSeq = endSeq
-        syncRangeReq.count = Int32(min(endSeq - startSeq + 1, 100))  // 限制单次拉取数量
-        if let conversationID = conversationID {
-            syncRangeReq.conversationID = conversationID
-        }
+        syncRangeReq.count = Int32(min(endSeq - startSeq + 1, 500))  // 限制单次拉取数量
         
         do {
             let requestData = try syncRangeReq.serializedData()
             
-            // 发送范围同步请求（不等待响应，响应通过 messageRouter 处理）
             guard let sendData = onSendData else {
                 IMLogger.shared.error("onSendData callback not set")
-                // 触发重试
-                retryHandler?()
+                Self.rangeContextLock.lock()
+                Self.syncRangeContexts.removeValue(forKey: requestId)
+                Self.rangeContextLock.unlock()
                 return
             }
             
-            sendData(requestData, .syncRangeReq) { result in
+            // 发送请求
+            sendData(requestData, .syncRangeReq) { [weak self] result in
                 switch result {
                 case .success:
-                    IMLogger.shared.debug("范围同步请求已发送 (startSeq=\(startSeq), endSeq=\(endSeq))")
+                    IMLogger.shared.debug("范围同步请求已发送 (requestId=\(requestId))")
+                    
+                    // 启动超时定时器（30秒）
+                    let timer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: false) { [weak self] _ in
+                        self?.handleRangeSyncTimeout(requestId: requestId)
+                    }
+                    
+                    Self.rangeContextLock.lock()
+                    Self.syncRangeContexts[requestId]?.timeoutTimer = timer
+                    Self.rangeContextLock.unlock()
+                    
                 case .failure(let error):
                     IMLogger.shared.error("发送范围同步请求失败: \(error)")
-                    // 触发重试
-                    retryHandler?()
+                    self?.handleRangeSyncFailure(requestId: requestId, error: error)
                 }
             }
         } catch {
             IMLogger.shared.error("序列化范围同步请求失败: \(error)")
-            // 触发重试
-            retryHandler?()
+            Self.rangeContextLock.lock()
+            Self.syncRangeContexts.removeValue(forKey: requestId)
+            Self.rangeContextLock.unlock()
+        }
+    }
+    
+    /// 处理范围同步超时
+    private func handleRangeSyncTimeout(requestId: String) {
+        handleRangeSyncError(requestId: requestId, reason: "timeout")
+    }
+    
+    /// 处理范围同步失败
+    private func handleRangeSyncFailure(requestId: String, error: Error) {
+        handleRangeSyncError(requestId: requestId, reason: "error: \(error)")
+    }
+    
+    /// 处理范围同步错误（统一的错误处理逻辑）
+    private func handleRangeSyncError(requestId: String, reason: String) {
+        Self.rangeContextLock.lock()
+        guard let context = Self.syncRangeContexts.removeValue(forKey: requestId) else {
+            Self.rangeContextLock.unlock()
+            return
+        }
+        context.cancelTimer()  // 取消定时器
+        Self.rangeContextLock.unlock()
+        
+        IMLogger.shared.error("❌ Range sync failed (requestId=\(requestId)): \(reason)")
+        
+        // 重试
+        if context.retryCount < maxRetryCount {
+            let delay = Double(context.retryCount + 1) * 2.0
+            IMLogger.shared.info("⏳ Retrying range sync in \(delay) seconds... (attempt \(context.retryCount + 1)/\(maxRetryCount))")
+            
+            // 生成重试任务的唯一 key
+            let retryKey = "\(context.conversationID)_\(context.startSeq)_\(context.endSeq)"
+            
+            // ✅ 使用 DispatchWorkItem 创建可取消的重试任务
+            let retryTask = DispatchWorkItem { [weak self] in
+                guard let self = self else { return }
+                
+                // 从待执行任务中移除（执行时清理）
+                Self.retryTaskLock.lock()
+                Self.pendingRetryTasks.removeValue(forKey: retryKey)
+                Self.retryTaskLock.unlock()
+                
+                // 检查连接状态
+                guard self.isConnected?() == true else {
+                    IMLogger.shared.debug("Range sync retry skipped: not connected")
+                    return
+                }
+                
+                self.syncMessagesInRange(
+                    conversationID: context.conversationID,
+                    startSeq: context.startSeq,
+                    endSeq: context.endSeq,
+                    retryCount: context.retryCount + 1
+                )
+            }
+            
+            // 保存到待执行任务字典（用于可能的取消）
+            Self.retryTaskLock.lock()
+            // 取消旧的重试任务（如果存在）
+            Self.pendingRetryTasks[retryKey]?.cancel()
+            Self.pendingRetryTasks[retryKey] = retryTask
+            Self.retryTaskLock.unlock()
+            
+            // 延迟执行
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + delay, execute: retryTask)
+        } else {
+            IMLogger.shared.error("💔 Range sync failed after \(maxRetryCount) retries")
         }
     }
     
     /// 处理范围同步响应（由 IMClient 通过 messageRouter 调用）
-    /// - Parameters:
-    ///   - response: 范围同步响应（Protobuf）
-    ///   - sequence: 序列号
-    internal func handleSyncRangeResponse(_ response: Im_Protocol_SyncRangeResponse, sequence: UInt32) {
-        // 从响应中获取 requestId（唯一标识）
+    internal func handleSyncRangeResponse(_ response: Im_Protocol_SyncRangeResponse) {
         let requestId = response.requestID
         
-        // 根据 requestId 直接查找上下文（O(1) 时间复杂度）
-        rangeContextLock.lock()
-        let context = syncRangeContexts.removeValue(forKey: requestId)  // ✅ 直接查找并移除
-        rangeContextLock.unlock()
-        
-        guard let context = context else {
-            IMLogger.shared.warning("收到范围同步响应但找不到对应的上下文 (requestId=\(requestId), seq=\(sequence))")
+        // 查找上下文
+        Self.rangeContextLock.lock()
+        guard let context = Self.syncRangeContexts.removeValue(forKey: requestId) else {
+            Self.rangeContextLock.unlock()
+            IMLogger.shared.warning("收到范围同步响应但找不到对应的上下文 (requestId=\(requestId))")
             return
         }
-        
-        let conversationID = response.conversationID.isEmpty ? nil : response.conversationID
+        context.cancelTimer()
+        Self.rangeContextLock.unlock()
         
         // 检查错误码
         guard response.errorCode == .errSuccess else {
-            IMLogger.shared.error("范围同步响应错误 (requestId=\(requestId)): \(response.errorMsg)")
-            // 触发重试
-            context.retryHandler?()
+            IMLogger.shared.error("❌ 范围同步失败 (requestId=\(requestId)): 服务端返回错误 [\(response.errorCode)] \(response.errorMsg)")
+            // 服务端返回的业务错误不需要重试，直接失败
             return
         }
         
-        // 转换为 IMMessage 对象（✅ 使用 MessageInfo 结构）
+        // 转换消息
         let messages = response.messages.compactMap { msgInfo -> IMMessage? in
-            guard !msgInfo.serverMsgID.isEmpty,
-                  !msgInfo.conversationID.isEmpty,
-                  !msgInfo.senderID.isEmpty else {
-                return nil
-            }
-            
-            let message = IMMessage()
-            message.serverMsgID = msgInfo.serverMsgID  // ✅ 服务端消息 ID
-            // ✅ 如果没有 clientMsgID，生成一个（用于作为数据库主键）
-            message.clientMsgID = msgInfo.clientMsgID.isEmpty ? IMUtils.generateUUID() : msgInfo.clientMsgID
-            message.conversationID = msgInfo.conversationID
-            message.senderID = msgInfo.senderID
-            message.seq = msgInfo.seq
-            message.messageType = IMMessageType(rawValue: Int(msgInfo.messageType)) ?? .text
-            message.content = String(data: msgInfo.content, encoding: .utf8) ?? ""  // ✅ Data -> String
-            message.createTime = msgInfo.createTime  // ✅ 创建时间
-            message.serverTime = msgInfo.serverTime
-            message.sendTime = msgInfo.sendTime      // ✅ 发送时间（UI显示）
-            message.status = IMMessageStatus(rawValue: Int(msgInfo.status)) ?? .sent
-            
-            // ✅ 根据 senderID 判断消息方向
-            message.direction = (msgInfo.senderID == self.userID) ? .send : .receive
-            
-            // ✅ 使用服务端返回的已读状态
-            message.isRead = msgInfo.isRead
-            
-            return message
+            return convertProtoMessageToIMMessage(msgInfo)
         }
         
         // 保存到数据库
         if !messages.isEmpty {
-            _ = try? database.saveMessages(messages)
-            
-            // ✅ 通知 messageManager 批量处理同步的消息（会触发 UI 更新）
-            messageManager.handleSyncedMessages(messages)
+            do {
+                try database.saveMessages(messages)
+                
+                // 通知 messageManager
+                messageManager.handleSyncedMessages(messages)
+                
+                IMLogger.shared.info("""
+                    ✅ 范围同步成功：
+                    - 请求ID: \(requestId)
+                    - 会话: \(response.conversationID)
+                    - 返回范围: [\(response.startSeq), \(response.endSeq)]
+                    - 实际拉取: \(messages.count) 条
+                    - 还有更多: \(response.hasMore_p)
+                    """)
+            } catch {
+                IMLogger.shared.error("Failed to save range sync messages: \(error)")
+            }
         }
         
-        IMLogger.shared.info("""
-            ✅ 范围同步成功：
-            - 请求ID: \(requestId)
-            - 会话: \(conversationID ?? "全局")
-            - 请求范围: [\(response.startSeq), \(response.endSeq)]
-            - 实际拉取: \(messages.count) 条
-            - 还有更多: \(response.hasMore_p)
-            """)
-        
-        // 如果还有更多，继续拉取（会生成新的 requestId）
+        // 如果还有更多，继续拉取
         if response.hasMore_p {
             IMLogger.shared.debug("继续拉取下一批范围同步数据...")
             syncMessagesInRange(
-                conversationID: conversationID,
+                conversationID: context.conversationID,
                 startSeq: response.endSeq + 1,
                 endSeq: context.endSeq,
-                retryCount: context.retryCount,
-                retryHandler: context.retryHandler
+                retryCount: context.retryCount
             )
         }
+    }
+    
+    // MARK: - 批量同步响应处理
+    
+    /// 处理批量同步响应（由 IMClient 的 messageRouter 调用）
+    internal func handleBatchSyncResponse(_ response: Im_Protocol_BatchSyncResponse) {
+        batchSyncContextLock.lock()
+        guard let context = currentBatchSyncContext else {
+            batchSyncContextLock.unlock()
+            IMLogger.shared.warning("Received batch sync response but no pending request")
+            return
+        }
+        // 取消超时定时器
+        context.cancelTimer()
+        currentBatchSyncContext = nil
+        batchSyncContextLock.unlock()
+        
+        // 检查错误码
+        guard response.errorCode == .errSuccess else {
+            IMLogger.shared.error("Batch sync response error: \(response.errorMsg)")
+            updateState(.failed(IMError.custom(response.errorMsg)))
+            try? database.setSyncingState(userID: userID, isSyncing: false)
+            return
+        }
+        
+        // 处理每个会话的消息
+        var totalMessageCount = 0
+        var conversationsWithGaps = 0
+        
+        for convMessages in response.conversationMessages {
+            // 转换消息
+            let messages = convMessages.messages.compactMap { msgInfo -> IMMessage? in
+                return convertProtoMessageToIMMessage(msgInfo)
+            }
+            
+            // 1. 检测该会话中消息的 seq 丢失
+            if !messages.isEmpty {
+                let lossInfoList = messageManager.checkBatchMessageLoss(messages: messages)
+                
+                if !lossInfoList.isEmpty {
+                    conversationsWithGaps += 1
+                    IMLogger.shared.warning("""
+                        ⚠️ 会话 \(convMessages.conversationID) 中检测到消息丢失：
+                        \(lossInfoList.map { "gap=\($0.lossCount)" }.joined(separator: ", "))
+                        """)
+                    // 注：批量同步中检测到的 gap 通常是服务器侧问题，记录日志即可
+                    // 不需要触发补拉，因为补拉也可能返回同样的结果
+                }
+            }
+            
+            // 2. 保存到数据库
+            if !messages.isEmpty {
+                do {
+                    try database.saveMessages(messages)
+                    
+                    // 通知 messageManager
+                    messageManager.handleSyncedMessages(messages)
+                    
+                    IMLogger.shared.debug("💾 Saved \(messages.count) messages for conversation \(convMessages.conversationID)")
+                } catch {
+                    IMLogger.shared.error("Failed to save messages for conversation \(convMessages.conversationID): \(error)")
+                }
+            }
+            
+            // 3. 更新本地同步状态
+            if var syncConfig = database.getSyncConfig(userID: userID) {
+                syncConfig.updateConversationMaxSeq(convMessages.conversationID, maxSeq: convMessages.maxSeq)
+                try? database.saveSyncConfig(syncConfig)
+            }
+            
+            totalMessageCount += messages.count
+            
+            // 4. 如果该会话还有更多消息
+            if convMessages.hasMore_p {
+                IMLogger.shared.debug("⚠️ Conversation \(convMessages.conversationID) has more messages (maxSeq=\(convMessages.maxSeq))")
+                // TODO: 可以在这里触发单独的会话同步
+            }
+            
+            // 5. 通知进度（每个会话处理完后）
+            let progress = IMSyncProgress(
+                currentCount: totalMessageCount,
+                totalCount: Int64(response.totalMessageCount),
+                currentBatch: 1  // 批量同步只有一个批次
+            )
+            
+            DispatchQueue.main.async { [weak self] in
+                self?.onProgress?(progress)
+            }
+        }
+        
+        let duration = Date().timeIntervalSince(context.startTime)
+        let throughput = duration > 0 ? Double(totalMessageCount) / duration : 0
+        
+        IMLogger.shared.info("""
+            ✅ Batch sync completed in \(String(format: "%.2f", duration))s
+            - Conversations: \(response.conversationMessages.count)
+            - Total messages: \(totalMessageCount)
+            - Conversations with gaps: \(conversationsWithGaps)
+            - Throughput: \(String(format: "%.0f", throughput)) msg/s
+            - Server time: \(response.serverTime)
+            """)
+        
+        updateState(.completed)
+        
+        // 清理同步状态
+        try? database.setSyncingState(userID: userID, isSyncing: false)
+    }
+    
+    // MARK: - 消息转换
+    
+    /// 将 Protobuf MessageInfo 转换为 IMMessage
+    private func convertProtoMessageToIMMessage(_ protoMsg: Im_Protocol_MessageInfo) -> IMMessage? {
+        let message = IMMessage()
+        
+        // 基础字段
+        message.serverMsgID = protoMsg.serverMsgID
+        message.clientMsgID = protoMsg.clientMsgID
+        message.conversationID = protoMsg.conversationID
+        message.senderID = protoMsg.senderID
+        message.receiverID = protoMsg.receiverID
+        message.groupID = protoMsg.groupID
+        message.seq = protoMsg.seq
+        message.sendTime = protoMsg.sendTime
+        message.serverTime = protoMsg.serverTime
+        message.createTime = protoMsg.createTime
+        
+        // 消息状态字段
+        message.isRead = protoMsg.isRead
+        message.isDeleted = protoMsg.isDeleted
+        message.isRevoked = protoMsg.isRevoked
+        message.revokedBy = protoMsg.revokedBy
+        message.revokedTime = protoMsg.revokedTime
+        
+        // 已读相关字段
+        message.readBy = protoMsg.readBy
+        message.readTime = protoMsg.readTime
+        
+        // 扩展字段
+        message.extra = protoMsg.extra
+        message.attachedInfo = protoMsg.attachedInfo
+        
+        // 转换消息类型
+        if let messageType = IMMessageType(rawValue: Int(protoMsg.messageType)) {
+            message.messageType = messageType
+        } else {
+            // 未知消息类型，使用 .unknown
+            IMLogger.shared.warning("Unknown message type: \(protoMsg.messageType), using .unknown")
+            message.messageType = .unknown
+        }
+        
+        // 转换消息状态
+        if let status = IMMessageStatus(rawValue: Int(protoMsg.status)) {
+            message.status = status
+        } else {
+            message.status = .sent  // 默认为已发送
+        }
+        
+        // 转换消息内容（从 Data 到 String）
+        if let contentStr = String(data: protoMsg.content, encoding: .utf8) {
+            message.content = contentStr
+        } else {
+            message.content = ""
+        }
+        
+        // 转换会话类型
+        if let conversationType = IMConversationType(rawValue: Int(protoMsg.conversationType)) {
+            message.conversationType = conversationType
+        } else {
+            // 如果没有指定或无效，根据 groupID 推断
+            if !protoMsg.groupID.isEmpty {
+                message.conversationType = .group
+            } else {
+                message.conversationType = .single
+            }
+        }
+        
+        // 推断消息方向（同步的消息需要判断是发送还是接收）
+        if protoMsg.senderID == userID {
+            message.direction = .send
+        } else {
+            message.direction = .receive
+        }
+        
+        return message
     }
 }
 

@@ -249,16 +249,14 @@ extension IMMessageManager {
             return
         }
         
-        // 使用范围同步接口，传入起始和结束 seq（响应通过事件通知）
+        // 使用范围同步接口，补拉丢失的消息
+        // lossInfo.expectedSeq 是期望的 seq，lossInfo.actualSeq 是实际收到的 seq
+        // 需要补拉 [expectedSeq, actualSeq-1] 范围的消息
         syncManager.syncMessagesInRange(
             conversationID: lossInfo.conversationID,
             startSeq: lossInfo.expectedSeq,
             endSeq: lossInfo.actualSeq - 1,
-            retryCount: retryCount,
-            retryHandler: { [weak self] in
-                // 重试回调
-                self?.requestMissingMessages(lossInfo: lossInfo, retryCount: retryCount + 1)
-            }
+            retryCount: retryCount
         )
     }
 }

@@ -304,14 +304,14 @@ public final class IMClient {
             self?.handleTCPKickOut(notification)
         }
         
-        // 注册同步响应
-        messageRouter.register(command: .syncRsp, type: Im_Protocol_SyncResponse.self) { [weak self] response, seq in
-            self?.messageSyncManager?.handleSyncResponse(response, sequence: seq)
+        // 注册批量同步响应
+        messageRouter.register(command: .batchSyncRsp, type: Im_Protocol_BatchSyncResponse.self) { [weak self] response, seq in
+            self?.messageSyncManager?.handleBatchSyncResponse(response)
         }
         
         // 注册范围同步响应
         messageRouter.register(command: .syncRangeRsp, type: Im_Protocol_SyncRangeResponse.self) { [weak self] response, seq in
-            self?.messageSyncManager?.handleSyncRangeResponse(response, sequence: seq)
+            self?.messageSyncManager?.handleSyncRangeResponse(response)
         }
     }
     
@@ -550,6 +550,10 @@ public final class IMClient {
     /// - Parameter completion: 完成回调
     public func logout(completion: ((Result<Void, IMError>) -> Void)? = nil) {
         IMLogger.shared.info("Logging out")
+        
+        // 停止所有同步任务
+        messageSyncManager?.stopSync()
+        messageSyncManager?.clearAllRangeSync()
         
         // 断开传输层
         transportSwitcher?.disconnect()
@@ -1071,9 +1075,9 @@ public final class IMClient {
                 // 消息发送响应（ACK）
                 handleWebSocketSendMessageResponse(wsMessage.body, sequence: wsMessage.sequence)
             
-            case .cmdSyncRsp:
-                // 增量同步响应
-                handleWebSocketSyncResponse(wsMessage.body, sequence: wsMessage.sequence)
+            case .cmdBatchSyncRsp:
+                // 批量同步响应
+                handleWebSocketBatchSyncResponse(wsMessage.body, sequence: wsMessage.sequence)
             
             case .cmdSyncRangeRsp:
                 // 范围同步响应
@@ -1161,18 +1165,18 @@ public final class IMClient {
         }
     }
     
-    private func handleWebSocketSyncResponse(_ body: Data, sequence: UInt32) {
+    private func handleWebSocketBatchSyncResponse(_ body: Data, sequence: UInt32) {
         do {
-            // 使用 Protobuf 解析同步响应
-            let syncRsp = try Im_Protocol_SyncResponse(serializedData: body)
+            // 使用 Protobuf 解析批量同步响应
+            let batchSyncRsp = try Im_Protocol_BatchSyncResponse(serializedData: body)
             
-            IMLogger.shared.debug("Received sync response: seq=\(sequence), messages=\(syncRsp.messages.count), maxSeq=\(syncRsp.maxSeq)")
+            IMLogger.shared.debug("Received batch sync response: seq=\(sequence), conversations=\(batchSyncRsp.conversationMessages.count), totalMessages=\(batchSyncRsp.totalMessageCount)")
             
             // 转发给同步管理器处理
-            messageSyncManager?.handleSyncResponse(syncRsp, sequence: sequence)
+            messageSyncManager?.handleBatchSyncResponse(batchSyncRsp)
             
         } catch {
-            IMLogger.shared.error("Failed to decode sync response: \(error)")
+            IMLogger.shared.error("Failed to decode batch sync response: \(error)")
         }
     }
     
@@ -1183,8 +1187,8 @@ public final class IMClient {
             
             IMLogger.shared.debug("Received sync range response: seq=\(sequence), requestId=\(syncRangeRsp.requestID), messages=\(syncRangeRsp.messages.count)")
             
-            // 转发给同步管理器处理
-            messageSyncManager?.handleSyncRangeResponse(syncRangeRsp, sequence: sequence)
+            // 转发给同步管理器处理（范围同步通过 request_id 匹配，不需要 sequence）
+            messageSyncManager?.handleSyncRangeResponse(syncRangeRsp)
             
         } catch {
             IMLogger.shared.error("Failed to decode sync range response: \(error)")
@@ -1365,11 +1369,11 @@ public final class IMClient {
             IMLogger.shared.debug("Received typing status: user=\(typingStatus.userID), status=\(status)")
             
             // 通知输入状态管理器
-        typingManager?.handleTypingPacket(
-                conversationID: typingStatus.conversationID,
-                userID: typingStatus.userID,
-            status: status
-        )
+            typingManager?.handleTypingPacket(
+                    conversationID: typingStatus.conversationID,
+                    userID: typingStatus.userID,
+                status: status
+            )
             
         } catch {
             IMLogger.shared.error("Failed to decode typing status: \(error)")
@@ -1424,33 +1428,21 @@ public final class IMClient {
     
     /// 处理丢包事件
     private func handlePacketLoss(expected: UInt32, received: UInt32, gap: UInt32) {
-        IMLogger.shared.warning("📉 Packet loss detected in IMClient: expected=\(expected), received=\(received), gap=\(gap)")
+        IMLogger.shared.warning("📉 WebSocket packet loss detected: expected=\(expected), received=\(received), gap=\(gap)")
         
-        // 根据丢包严重程度采取不同策略
-        if gap > 3 {
-            // 中等或严重丢包：主动触发增量同步（不等待重连）
-            IMLogger.shared.warning("⚠️ Moderate/severe packet loss (gap=\(gap)), triggering incremental sync")
-            triggerIncrementalSync()
+        // ⚠️ 注意：WebSocket 层面的序列号丢失不一定意味着消息丢失
+        // 可能只是网络抖动导致的协议层面的序列号跳跃
+        // 真正的消息丢失会在消息层面检测（IMMessageManager.checkMessageLoss）
+        // 并通过范围同步（syncMessagesInRange）精准补拉
+        
+        // 只记录日志，不主动触发同步，避免不必要的批量同步
+        if gap > 10 {
+            IMLogger.shared.error("❌ Severe packet loss (gap=\(gap)), consider checking network quality")
+        } else if gap > 3 {
+            IMLogger.shared.warning("⚠️ Moderate packet loss (gap=\(gap)), will be handled by message-level detection if needed")
         } else {
-            // 轻微丢包：只记录，依赖 ACK 超时重传
-            IMLogger.shared.info("ℹ️ Minor packet loss (gap=\(gap)), relying on ACK retry mechanism")
+            IMLogger.shared.info("ℹ️ Minor packet loss (gap=\(gap)), monitoring")
         }
-    }
-    
-    /// 主动触发增量同步（不等待重连）
-    private func triggerIncrementalSync() {
-        guard let database = databaseManager else {
-            IMLogger.shared.error("Database not initialized, cannot trigger sync")
-            return
-        }
-        
-        // 获取本地最大序列号
-        let localMaxSeq = database.getMaxSeq()
-        
-        IMLogger.shared.info("🔄 Triggering incremental sync from seq: \(localMaxSeq + 1)")
-        
-        // 触发增量同步
-        messageSyncManager?.sync(fromSeq: localMaxSeq + 1)
     }
     
     /// 处理认证响应

@@ -272,9 +272,9 @@ public final class IMDatabaseManager: IMDatabaseProtocol {
         try execute(sql: """
             CREATE TABLE IF NOT EXISTS sync_config (
                 user_id TEXT PRIMARY KEY,
-                last_sync_seq INTEGER DEFAULT 0,
                 last_sync_time INTEGER DEFAULT 0,
-                is_syncing INTEGER DEFAULT 0
+                is_syncing INTEGER DEFAULT 0,
+                conversation_states TEXT DEFAULT '{}'
             );
             """)
         

@@ -47,8 +47,8 @@ public enum IMCommandType: UInt16 {
     case revokeMsgPush = 207
     
     // 同步相关（300-399）
-    case syncReq = 300
-    case syncRsp = 301
+    case batchSyncReq = 300
+    case batchSyncRsp = 301
     case syncFinished = 302
     case syncRangeReq = 303
     case syncRangeRsp = 304

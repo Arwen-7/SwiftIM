@@ -294,9 +294,12 @@ public final class IMMessageSyncHTTPManager {
                 IMLogger.shared.info("💾 Batch \(currentBatch) saved: \(response.messages.count) messages")
             }
             
-            // 3. 更新 lastSyncSeq
+            // 3. 更新同步配置
             if response.maxSeq > 0 {
-                try database.updateLastSyncSeq(userID: userID, seq: response.maxSeq)
+                if var syncConfig = database.getSyncConfig(userID: userID) {
+                    syncConfig.lastSyncTime = Int64(Date().timeIntervalSince1970 * 1000)
+                    try database.saveSyncConfig(syncConfig)
+                }
             }
             
             // 3. 计算进度

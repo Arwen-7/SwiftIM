@@ -217,9 +217,6 @@ public protocol IMDatabaseProtocol: AnyObject {
     /// 获取同步配置
     func getSyncConfig(userID: String) -> IMSyncConfig?
     
-    /// 更新最后同步的 seq
-    func updateLastSyncSeq(userID: String, seq: Int64) throws
-    
     /// 设置同步状态
     func setSyncingState(userID: String, isSyncing: Bool) throws
     

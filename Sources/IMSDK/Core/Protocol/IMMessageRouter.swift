@@ -115,9 +115,13 @@ public final class IMMessageRouter {
                 let msg = try Im_Protocol_RevokeMessagePush(serializedData: body)
                 (handler as? MessageHandler<Im_Protocol_RevokeMessagePush>)?(msg, sequence)
                 
-            case .syncRsp:
-                let msg = try Im_Protocol_SyncResponse(serializedData: body)
-                (handler as? MessageHandler<Im_Protocol_SyncResponse>)?(msg, sequence)
+            case .batchSyncRsp:
+                let msg = try Im_Protocol_BatchSyncResponse(serializedData: body)
+                (handler as? MessageHandler<Im_Protocol_BatchSyncResponse>)?(msg, sequence)
+                
+            case .syncRangeRsp:
+                let msg = try Im_Protocol_SyncRangeResponse(serializedData: body)
+                (handler as? MessageHandler<Im_Protocol_SyncRangeResponse>)?(msg, sequence)
                 
             case .readReceiptRsp:
                 let msg = try Im_Protocol_ReadReceiptResponse(serializedData: body)

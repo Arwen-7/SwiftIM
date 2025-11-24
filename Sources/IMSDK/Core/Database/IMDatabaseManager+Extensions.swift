@@ -16,8 +16,8 @@ extension IMDatabaseManager {
         
         // ✅ 使用 INSERT OR REPLACE 确保记录一定会被保存
         let sql = """
-        INSERT OR REPLACE INTO sync_config (user_id, is_syncing, last_sync_time, last_sync_seq)
-        VALUES (?, ?, ?, COALESCE((SELECT last_sync_seq FROM sync_config WHERE user_id = ?), 0))
+        INSERT OR REPLACE INTO sync_config (user_id, is_syncing, last_sync_time, conversation_states)
+        VALUES (?, ?, ?, COALESCE((SELECT conversation_states FROM sync_config WHERE user_id = ?), '{}'))
         """
         
         var statement: OpaquePointer?

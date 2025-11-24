@@ -84,6 +84,7 @@ public enum IMConversationType: Int, Codable {
 
 /// 消息类型
 public enum IMMessageType: Int, Codable {
+    case unknown = 0       // 未知类型
     case text = 1          // 文本
     case image = 2         // 图片
     case audio = 3         // 语音
@@ -719,18 +720,52 @@ public class IMFriend: Codable {
 
 // MARK: - 同步配置
 
+/// 会话同步状态
+public struct IMConversationSyncState: Codable {
+    public var conversationID: String
+    public var maxSeq: Int64
+    public var lastSyncTime: Int64
+    
+    public init(conversationID: String, maxSeq: Int64, lastSyncTime: Int64 = 0) {
+        self.conversationID = conversationID
+        self.maxSeq = maxSeq
+        self.lastSyncTime = lastSyncTime
+    }
+}
+
 /// 同步配置
 public class IMSyncConfig: Codable {
     public var userID: String = ""
-    public var lastSyncSeq: Int64 = 0        // 最后同步的 seq
     public var lastSyncTime: Int64 = 0       // 最后同步时间
     public var isSyncing: Bool = false       // 是否正在同步
-    public var version: Int = 0              // 版本号
+    
+    // 每个会话的同步状态（key: conversationID）
+    public var conversationStates: [String: IMConversationSyncState] = [:]
     
     public init() {}
     
     public init(userID: String) {
         self.userID = userID
+    }
+    
+    /// 获取会话的最大 seq
+    public func getConversationMaxSeq(_ conversationID: String) -> Int64 {
+        return conversationStates[conversationID]?.maxSeq ?? 0
+    }
+    
+    /// 更新会话的最大 seq
+    public func updateConversationMaxSeq(_ conversationID: String, maxSeq: Int64) {
+        if var state = conversationStates[conversationID] {
+            state.maxSeq = maxSeq
+            state.lastSyncTime = Int64(Date().timeIntervalSince1970 * 1000)
+            conversationStates[conversationID] = state
+        } else {
+            conversationStates[conversationID] = IMConversationSyncState(
+                conversationID: conversationID,
+                maxSeq: maxSeq,
+                lastSyncTime: Int64(Date().timeIntervalSince1970 * 1000)
+            )
+        }
     }
 }
 

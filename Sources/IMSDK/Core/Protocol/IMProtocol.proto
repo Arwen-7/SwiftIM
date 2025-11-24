@@ -58,11 +58,11 @@ enum CommandType {
     CMD_REVOKE_MSG_PUSH = 207;   // 撤回消息推送
     
     // 同步相关（300-399）
-    CMD_SYNC_REQ = 300;          // 增量同步请求
-    CMD_SYNC_RSP = 301;          // 增量同步响应
-    CMD_SYNC_FINISHED = 302;     // 同步完成通知
-    CMD_SYNC_RANGE_REQ = 303;    // 范围同步请求
-    CMD_SYNC_RANGE_RSP = 304;    // 范围同步响应
+    CMD_BATCH_SYNC_REQ = 300;         // 批量同步请求（一次性同步所有会话）
+    CMD_BATCH_SYNC_RSP = 301;         // 批量同步响应
+    CMD_SYNC_FINISHED = 302;          // 同步完成通知
+    CMD_SYNC_RANGE_REQ = 303;         // 范围同步请求（补拉丢失消息）
+    CMD_SYNC_RANGE_RSP = 304;         // 范围同步响应
     
     // 在线状态（400-499）
     CMD_ONLINE_STATUS_REQ = 400; // 查询在线状态请求
@@ -169,7 +169,15 @@ message MessageInfo {
     int32 status = 12;           // 消息状态（同步时使用）
     bool is_read = 13;           // 是否已读（同步时使用）
     int64 create_time = 14;      // 创建时间（客户端创建消息的时间）
-    map<string, string> extra = 15;
+    string extra = 15;           // 扩展字段（JSON 字符串）
+    repeated string read_by = 16;  // 已读者 ID 列表（群聊）
+    int64 read_time = 17;        // 读取时间（单聊）
+    bool is_deleted = 18;        // 是否已删除
+    bool is_revoked = 19;        // 是否已撤回
+    string revoked_by = 20;      // 撤回者 ID
+    int64 revoked_time = 21;     // 撤回时间
+    string attached_info = 22;   // 附加信息
+    int32 conversation_type = 23; // 会话类型（1=单聊，2=群聊，3=聊天室，4=系统消息）
 }
 
 // 发送消息请求
@@ -224,49 +232,62 @@ message RevokeMessagePush {
 }
 
 // ============================================
-// 同步相关
+// 同步相关（批量同步）
 // ============================================
 
-// 增量同步请求
-message SyncRequest {
-    int64 last_seq = 1;          // 上次同步的最大 seq（从此 seq 之后开始拉取）
-    int32 count = 2;             // 本次拉取数量
-    int64 timestamp = 3;         // 请求时间戳（毫秒）
+// 会话同步状态（客户端本地状态）
+message ConversationSyncState {
+    string conversation_id = 1;  // 会话ID
+    int64 last_seq = 2;          // 本地最大 seq
 }
 
-// 增量同步响应
-message SyncResponse {
+// 批量同步请求（一次性同步所有会话）
+message BatchSyncRequest {
+    repeated ConversationSyncState conversation_states = 1;  // 客户端的会话同步状态（可为空，表示首次全量同步）
+    int32 max_count_per_conversation = 2;  // 每个会话最多拉取的消息数（默认100，最大500）
+}
+
+// 会话消息结果
+message ConversationMessages {
+    string conversation_id = 1;  // 会话ID
+    repeated MessageInfo messages = 2;  // 消息列表
+    int64 max_seq = 3;           // 服务端该会话的最大 seq
+    int64 synced_seq = 4;        // 本次同步到的 seq（可能小于 max_seq，因为有 max_count 限制）
+    bool has_more = 5;           // 是否还有更多消息未同步
+}
+
+// 批量同步响应
+message BatchSyncResponse {
     ErrorCode error_code = 1;
     string error_msg = 2;
-    repeated MessageInfo messages = 3;  // ✅ 使用通用消息结构
-    int64 max_seq = 4;           // 本批消息的最大 seq
-    bool has_more = 5;           // 是否还有更多消息
-    int64 total_count = 6;       // 总共需要同步的消息数量
-    int64 server_time = 7;       // 服务器时间
+    repeated ConversationMessages conversation_messages = 3;  // 所有会话的消息
+    int64 server_time = 4;       // 服务器时间
+    int32 total_message_count = 5;  // 本次同步的总消息数
 }
 
-// ✅ 移除 MessageData，统一使用 MessageInfo
+// ============================================
+// 范围同步（用于补拉丢失的消息）
+// ============================================
 
-// 范围同步请求（用于补齐丢失的消息）
+// 范围同步请求
 message SyncRangeRequest {
-    int64 start_seq = 1;         // 起始 seq（包含）
-    int64 end_seq = 2;           // 结束 seq（包含）
-    string conversation_id = 3;  // 会话 ID（可选，为空表示全局同步）
-    int32 count = 4;             // 每批拉取数量
-    string request_id = 5;       // 请求唯一标识（客户端生成，用于匹配响应）
+    string request_id = 1;       // 请求唯一标识（由客户端生成，用于响应匹配）
+    string conversation_id = 2;  // 会话ID（必填）
+    int64 start_seq = 3;         // 起始 seq（包含）
+    int64 end_seq = 4;           // 结束 seq（包含）
+    int32 count = 5;             // 单次拉取数量限制（默认100，最大500）
 }
 
 // 范围同步响应
 message SyncRangeResponse {
     ErrorCode error_code = 1;
     string error_msg = 2;
-    repeated MessageInfo messages = 3;  // ✅ 使用通用消息结构
-    int64 start_seq = 4;         // 本批起始 seq
-    int64 end_seq = 5;           // 本批结束 seq
-    bool has_more = 6;           // 是否还有更多消息
-    int64 server_time = 7;       // 服务器时间
-    string conversation_id = 8;  // 会话 ID（与请求保持一致）
-    string request_id = 9;       // 请求唯一标识（与请求保持一致）
+    string request_id = 3;           // 对应请求的 request_id
+    string conversation_id = 4;      // 会话ID
+    repeated MessageInfo messages = 5;  // 消息列表
+    int64 start_seq = 6;             // 实际返回的起始 seq
+    int64 end_seq = 7;               // 实际返回的结束 seq
+    bool has_more = 8;               // 是否还有更多消息（如果请求范围过大，需要分批拉取）
 }
 
 // ============================================
