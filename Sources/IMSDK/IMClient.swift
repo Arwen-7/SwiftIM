@@ -228,12 +228,13 @@ public final class IMClient {
             self?.handleTransportStateChange(state)
         }
         
-        transport?.onReceive = { [weak self] data in
-            self?.handleTransportReceive(data)
-        }
-        
         transport?.onError = { [weak self] error in
             self?.handleTransportError(error)
+        }
+        
+        // 设置消息接收回调（统一接口：接收已解码的 command, sequence, body）
+        transport?.onReceive = { [weak self] command, sequence, body in
+            self?.handleDecodedPacket(command: command, sequence: sequence, body: body)
         }
     }
     
@@ -243,16 +244,17 @@ public final class IMClient {
             self?.handleTransportStateChange(state)
         }
         
-        transportSwitcher?.onReceive = { [weak self] data in
-            self?.handleTransportReceive(data)
-        }
-        
         transportSwitcher?.onError = { [weak self] error in
             self?.handleTransportError(error)
         }
         
         transportSwitcher?.onTransportSwitch = { oldType, newType in
             IMLogger.shared.info("🔄 Transport switched: \(oldType) → \(newType)")
+        }
+        
+        // 设置消息接收回调（统一接口：接收已解码的 command, sequence, body）
+        transportSwitcher?.currentTransport.onReceive = { [weak self] command, sequence, body in
+            self?.handleDecodedPacket(command: command, sequence: sequence, body: body)
         }
     }
     
@@ -1009,7 +1011,8 @@ public final class IMClient {
     }
     
     /// 处理传输层接收数据
-    private func handleTransportReceive(_ data: Data) {
+    /// 处理已解码的数据包（TCP 和 WebSocket 统一接口）
+    private func handleDecodedPacket(command: IMCommandType, sequence: UInt32, body: Data) {
         // 根据传输层类型选择不同的路由方式
         guard let currentTransport = transport ?? transportSwitcher?.currentTransport else {
             IMLogger.shared.error("No transport available")
@@ -1018,85 +1021,77 @@ public final class IMClient {
         
         switch currentTransport.transportType {
         case .tcp:
-            // TCP 传输：data 是 IMPacket 格式（header + protobuf body）
-            // IMMessageRouter 会解码 IMPacket
-        messageRouter.route(data: data)
+            // TCP：通过 messageRouter 路由（支持自定义协议的完整功能）
+            messageRouter.routeDecodedPacket(command: command, sequence: sequence, body: body)
             
         case .webSocket:
-            // WebSocket 传输：data 是纯 Protobuf body
-            // 需要先解析 Protobuf 获取 command 和 sequence
-            routeWebSocketMessage(data)
+            // WebSocket：通过专门的 WebSocket 处理方法
+            handleWebSocketPacket(command: command, sequence: sequence, body: body)
+        }
+    }
+    
+    /// 处理 WebSocket 数据包
+    private func handleWebSocketPacket(command: IMCommandType, sequence: UInt32, body: Data) {
+        // 根据 command 路由到不同的处理器
+        switch command {
+        case .pushMsg:
+            // 推送消息
+            handleWebSocketPushMessage(body, sequence: sequence)
+            
+        case .authRsp:
+            // 认证响应
+            handleWebSocketAuthResponse(body, sequence: sequence)
+            
+        case .heartbeatRsp:
+            // 心跳响应
+            handleWebSocketHeartbeatResponse(body, sequence: sequence)
+            
+        case .batchMsg:
+            // 批量消息
+            handleWebSocketBatchMessages(body, sequence: sequence)
+            
+        case .revokeMsgPush:
+            // 撤回消息推送
+            handleWebSocketRevokeMessage(body, sequence: sequence)
+            
+        case .readReceiptPush:
+            // 已读回执推送
+            handleWebSocketReadReceipt(body, sequence: sequence)
+            
+        case .typingStatusPush:
+            // 输入状态推送
+            handleWebSocketTypingStatus(body, sequence: sequence)
+            
+        case .kickOut:
+            // 踢出通知
+            handleWebSocketKickOut(body)
+            
+        case .sendMsgRsp:
+            // 消息发送响应（ACK）
+            handleWebSocketSendMessageResponse(body, sequence: sequence)
+        
+        case .batchSyncRsp:
+            // 批量同步响应
+            handleWebSocketBatchSyncResponse(body, sequence: sequence)
+        
+        case .syncRangeRsp:
+            // 范围同步响应
+            handleWebSocketSyncRangeResponse(body, sequence: sequence)
+        
+        case .readReceiptRsp:
+            // 已读回执响应
+            handleWebSocketReadReceiptResponse(body, sequence: sequence)
+        
+        case .unknown:
+            // 未知命令，记录日志
+            IMLogger.shared.warning("Received unknown command (rawValue: 0), sequence: \(sequence)")
+        
+        default:
+            IMLogger.shared.warning("Unhandled WebSocket command: \(command) (rawValue: \(command.rawValue))")
         }
     }
     
     /// 路由 WebSocket 消息（使用 Protobuf WebSocketMessage）
-    private func routeWebSocketMessage(_ data: Data) {
-        do {
-            // 1. 使用 Protobuf 解码 WebSocket 消息
-            let wsMessage = try Im_Protocol_WebSocketMessage(serializedData: data)
-            
-            IMLogger.shared.debug("WebSocket message received: command=\(wsMessage.command), seq=\(wsMessage.sequence)")
-            
-            // 2. 根据 command 路由到不同的处理器
-            switch wsMessage.command {
-            case .cmdPushMsg:
-                // 推送消息
-                handleWebSocketPushMessage(wsMessage.body, sequence: wsMessage.sequence)
-                
-            case .cmdAuthRsp:
-                // 认证响应
-                handleWebSocketAuthResponse(wsMessage.body, sequence: wsMessage.sequence)
-                
-            case .cmdHeartbeatRsp:
-                // 心跳响应
-                handleWebSocketHeartbeatResponse(wsMessage.body, sequence: wsMessage.sequence)
-                
-            case .cmdBatchMsg:
-                // 批量消息
-                handleWebSocketBatchMessages(wsMessage.body, sequence: wsMessage.sequence)
-                
-            case .cmdRevokeMsgPush:
-                // 撤回消息推送
-                handleWebSocketRevokeMessage(wsMessage.body, sequence: wsMessage.sequence)
-                
-            case .cmdReadReceiptPush:
-                // 已读回执推送
-                handleWebSocketReadReceipt(wsMessage.body, sequence: wsMessage.sequence)
-                
-            case .cmdTypingStatusPush:
-                // 输入状态推送
-                handleWebSocketTypingStatus(wsMessage.body, sequence: wsMessage.sequence)
-                
-            case .cmdKickOut:
-                // 踢出通知
-                handleWebSocketKickOut(wsMessage.body)
-                
-            case .cmdSendMsgRsp:
-                // 消息发送响应（ACK）
-                handleWebSocketSendMessageResponse(wsMessage.body, sequence: wsMessage.sequence)
-            
-            case .cmdBatchSyncRsp:
-                // 批量同步响应
-                handleWebSocketBatchSyncResponse(wsMessage.body, sequence: wsMessage.sequence)
-            
-            case .cmdSyncRangeRsp:
-                // 范围同步响应
-                handleWebSocketSyncRangeResponse(wsMessage.body, sequence: wsMessage.sequence)
-            
-            case .cmdReadReceiptRsp:
-                // 已读回执响应
-                handleWebSocketReadReceiptResponse(wsMessage.body, sequence: wsMessage.sequence)
-            
-            default:
-                IMLogger.shared.warning("Unhandled WebSocket command: \(wsMessage.command)")
-            }
-            
-        } catch {
-            IMLogger.shared.error("Failed to decode WebSocket message: \(error)")
-            // 尝试兼容旧格式（如果有的话）
-        }
-    }
-    
     // MARK: - WebSocket Message Handlers
     
     private func handleWebSocketPushMessage(_ body: Data, sequence: UInt32) {

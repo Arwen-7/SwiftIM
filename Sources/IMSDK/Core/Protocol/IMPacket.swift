@@ -21,6 +21,9 @@ public let kPacketHeaderSize: Int = 16
 
 /// 命令类型（与 proto 文件中的 CommandType 对应）
 public enum IMCommandType: UInt16 {
+    // 未知命令（0）
+    case unknown = 0
+    
     // 连接相关（1-99）
     case connectReq = 1
     case connectRsp = 2

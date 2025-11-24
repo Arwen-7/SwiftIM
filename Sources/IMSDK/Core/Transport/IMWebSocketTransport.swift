@@ -32,7 +32,8 @@ public final class IMWebSocketTransport: IMTransportProtocol {
     }
     
     public var onStateChange: ((IMTransportState) -> Void)?
-    public var onReceive: ((Data) -> Void)?
+    /// 接收已解码的数据包（command, sequence, protobuf body）
+    public var onReceive: ((IMCommandType, UInt32, Data) -> Void)?
     public var onError: ((IMTransportError) -> Void)?
     
     // MARK: - Properties
@@ -314,7 +315,7 @@ public final class IMWebSocketTransport: IMTransportProtocol {
             
             IMLogger.shared.debug("WebSocket received \(data.count) bytes")
             
-            // 尝试解析 WebSocket 消息，检查是否是认证响应
+            // 解析 WebSocket 消息包（获取 command, sequence, body）
             do {
                 let wsMessage = try Im_Protocol_WebSocketMessage(serializedData: data)
                 
@@ -326,14 +327,24 @@ public final class IMWebSocketTransport: IMTransportProtocol {
                     self.handleAuthResponse(wsMessage)
                     return
                 }
+                
+                // 转换 Protobuf CommandType 到 SDK CommandType
+                let command = IMCommandType(rawValue: UInt16(wsMessage.command.rawValue)) ?? .unknown
+                
+                // 如果是未知命令，记录警告
+                if command == .unknown {
+                    IMLogger.shared.warning("Unknown command type: \(wsMessage.command.rawValue), passing as .unknown")
+                }
+                
+                // 传递已解码的数据包（command, sequence, protobuf body）
+                // 让上层决定如何处理未知命令
+                self.onReceive?(command, wsMessage.sequence, wsMessage.body)
+                
             } catch {
-                // 解析失败，仍然传递给上层
-                IMLogger.shared.warning("Failed to parse WebSocket message: \(error)")
+                // 解析失败，记录错误
+                IMLogger.shared.error("Failed to parse WebSocket message: \(error)")
+                self.onError?(.protocolError("WebSocket message parse failed: \(error.localizedDescription)"))
             }
-            
-            // ✅ WebSocket 直接传递原始 Protobuf 数据
-            // 上层会根据 transportType 选择不同的解码方式
-            self.onReceive?(data)
         }
         
         // 错误

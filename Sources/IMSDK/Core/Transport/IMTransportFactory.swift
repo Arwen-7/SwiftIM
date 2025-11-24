@@ -99,8 +99,8 @@ public final class IMTransportSwitcher {
         }
     }
     
-    /// 接收数据回调
-    public var onReceive: ((Data) -> Void)? {
+    /// 接收已解码的数据包（command, sequence, protobuf body）
+    public var onReceive: ((IMCommandType, UInt32, Data) -> Void)? {
         didSet {
             currentTransport.onReceive = onReceive
         }

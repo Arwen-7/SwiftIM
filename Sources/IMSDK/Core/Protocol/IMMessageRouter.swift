@@ -56,8 +56,8 @@ public final class IMMessageRouter {
     
     // MARK: - Route Messages
     
-    /// 路由消息
-    /// - Parameter data: 原始二进制数据
+    /// 路由消息（从原始 TCP 字节流）
+    /// - Parameter data: 原始 TCP 字节流
     public func route(data: Data) {
         do {
             // 解码数据包
@@ -71,6 +71,15 @@ public final class IMMessageRouter {
         } catch {
             print("[IMMessageRouter] 解码失败：\(error)")
         }
+    }
+    
+    /// 路由已解码的数据包（避免重复解码）
+    /// - Parameters:
+    ///   - command: 命令类型
+    ///   - sequence: 序列号
+    ///   - body: Protobuf 消息体
+    public func routeDecodedPacket(command: IMCommandType, sequence: UInt32, body: Data) {
+        routePacket(command: command, sequence: sequence, body: body)
     }
     
     /// 路由单个数据包（使用 Protobuf 解析）
@@ -139,8 +148,11 @@ public final class IMMessageRouter {
                 let msg = try Im_Protocol_KickOutNotification(serializedData: body)
                 (handler as? MessageHandler<Im_Protocol_KickOutNotification>)?(msg, sequence)
                 
+            case .unknown:
+                print("[IMMessageRouter] 收到未知命令（rawValue: 0），序列号：\(sequence)")
+                
             default:
-                print("[IMMessageRouter] 不支持的命令类型：\(command)")
+                print("[IMMessageRouter] 不支持的命令类型：\(command) (rawValue: \(command.rawValue))")
             }
             
         } catch {

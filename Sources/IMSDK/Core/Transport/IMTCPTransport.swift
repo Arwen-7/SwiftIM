@@ -39,7 +39,8 @@ public final class IMTCPTransport: IMTransportProtocol {
     }
     
     public var onStateChange: ((IMTransportState) -> Void)?
-    public var onReceive: ((Data) -> Void)?
+    /// 接收已解码的数据包（command, sequence, protobuf body）
+    public var onReceive: ((IMCommandType, UInt32, Data) -> Void)?
     public var onError: ((IMTransportError) -> Void)?
     
     // MARK: - Components
@@ -516,10 +517,6 @@ public final class IMTCPTransport: IMTransportProtocol {
         // 2. 服务器推送可能来自不同实例（负载均衡），sequence 可能不连续
         // 3. 消息的顺序和去重由业务层的 message.seq 负责
         switch command {
-        case .pushMsg, .batchMsg:
-            // 消息推送
-            onReceive?(body)
-            
         case .heartbeatRsp:
             // 心跳响应
             heartbeatManager?.handleHeartbeatResponse()
@@ -531,7 +528,7 @@ public final class IMTCPTransport: IMTransportProtocol {
             
         default:
             // 其他推送消息
-            onReceive?(body)
+            onReceive?(command, sequence, body)
         }
     }
     

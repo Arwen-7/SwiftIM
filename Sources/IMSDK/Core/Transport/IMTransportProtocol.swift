@@ -56,8 +56,8 @@ public protocol IMTransportProtocol: AnyObject {
     /// 状态变化回调
     var onStateChange: ((IMTransportState) -> Void)? { get set }
     
-    /// 接收数据回调
-    var onReceive: ((Data) -> Void)? { get set }
+    /// 接收已解码的数据包（command, sequence, protobuf body）
+    var onReceive: ((IMCommandType, UInt32, Data) -> Void)? { get set }
     
     /// 错误回调
     var onError: ((IMTransportError) -> Void)? { get set }
