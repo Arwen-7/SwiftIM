@@ -96,7 +96,7 @@ extension IMMessageManager {
     ) -> Result<Void, IMError> {
         // 使用 Protobuf 构建撤回请求
         var protoRequest = Im_Protocol_RevokeMessageRequest()
-        protoRequest.messageID = messageID
+        protoRequest.serverMsgID = messageID  // ✅ 使用 serverMsgID
         protoRequest.conversationID = conversationID
         
         // 序列化为二进制数据
@@ -186,7 +186,7 @@ extension IMMessageManager {
     private func sendReadReceipt(messageIDs: [String], conversationID: String) {
         // 使用 Protobuf 构建已读回执请求
         var protoRequest = Im_Protocol_ReadReceiptRequest()
-        protoRequest.messageIds = messageIDs
+        protoRequest.serverMsgIds = messageIDs  // ✅ 使用 serverMsgIds
         protoRequest.conversationID = conversationID
         
         // 序列化为二进制数据
@@ -220,8 +220,11 @@ extension IMMessageManager {
     /// 更新会话（如果需要）
     private func updateConversationIfNeeded(message: IMMessage) {
         // 如果是会话的最后一条消息，需要更新会话
-        guard let conversation = database.getConversation(conversationID: message.conversationID),
-              conversation.lastMessage?.messageID == message.messageID else {
+        guard let conversation = database.getConversation(conversationID: message.conversationID) else {
+            return
+        }
+        // ✅ 只比较 clientMsgID（因为 clientMsgID 肯定会有）
+        guard conversation.lastMessage?.clientMsgID == message.clientMsgID else {
             return
         }
         

@@ -470,8 +470,8 @@ struct Im_Protocol_MessageInfo: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// 服务器消息 ID（发送时为空，由服务端生成）
-  var messageID: String = String()
+  /// ✅ 服务器消息 ID（发送时为空，由服务端生成）
+  var serverMsgID: String = String()
 
   /// 客户端消息 ID
   var clientMsgID: String = String()
@@ -552,8 +552,8 @@ struct Im_Protocol_SendMessageResponse: Sendable {
 
   var errorMsg: String = String()
 
-  /// 服务器消息 ID
-  var messageID: String = String()
+  /// ✅ 服务器消息 ID
+  var serverMsgID: String = String()
 
   /// 客户端消息 ID（用于匹配本地消息）
   var clientMsgID: String = String()
@@ -598,7 +598,8 @@ struct Im_Protocol_MessageAck: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  var messageID: String = String()
+  /// ✅ 服务器消息 ID
+  var serverMsgID: String = String()
 
   var seq: Int64 = 0
 
@@ -626,7 +627,8 @@ struct Im_Protocol_RevokeMessageRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  var messageID: String = String()
+  /// ✅ 服务器消息 ID
+  var serverMsgID: String = String()
 
   var conversationID: String = String()
 
@@ -656,7 +658,8 @@ struct Im_Protocol_RevokeMessagePush: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  var messageID: String = String()
+  /// ✅ 服务器消息 ID
+  var serverMsgID: String = String()
 
   var conversationID: String = String()
 
@@ -787,7 +790,8 @@ struct Im_Protocol_ReadReceiptRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  var messageIds: [String] = []
+  /// ✅ 服务器消息 ID 列表
+  var serverMsgIds: [String] = []
 
   var conversationID: String = String()
 
@@ -817,7 +821,8 @@ struct Im_Protocol_ReadReceiptPush: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  var messageIds: [String] = []
+  /// ✅ 服务器消息 ID 列表
+  var serverMsgIds: [String] = []
 
   var conversationID: String = String()
 
@@ -1180,7 +1185,7 @@ extension Im_Protocol_KickOutNotification: SwiftProtobuf.Message, SwiftProtobuf.
 
 extension Im_Protocol_MessageInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".MessageInfo"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}message_id\0\u{3}client_msg_id\0\u{3}conversation_id\0\u{3}sender_id\0\u{3}receiver_id\0\u{3}group_id\0\u{3}message_type\0\u{1}content\0\u{3}send_time\0\u{3}server_time\0\u{1}seq\0\u{1}status\0\u{3}is_read\0\u{3}create_time\0\u{1}extra\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_msg_id\0\u{3}client_msg_id\0\u{3}conversation_id\0\u{3}sender_id\0\u{3}receiver_id\0\u{3}group_id\0\u{3}message_type\0\u{1}content\0\u{3}send_time\0\u{3}server_time\0\u{1}seq\0\u{1}status\0\u{3}is_read\0\u{3}create_time\0\u{1}extra\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1188,7 +1193,7 @@ extension Im_Protocol_MessageInfo: SwiftProtobuf.Message, SwiftProtobuf._Message
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.messageID) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.serverMsgID) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.clientMsgID) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.conversationID) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.senderID) }()
@@ -1209,8 +1214,8 @@ extension Im_Protocol_MessageInfo: SwiftProtobuf.Message, SwiftProtobuf._Message
   }
 
   func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.messageID.isEmpty {
-      try visitor.visitSingularStringField(value: self.messageID, fieldNumber: 1)
+    if !self.serverMsgID.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverMsgID, fieldNumber: 1)
     }
     if !self.clientMsgID.isEmpty {
       try visitor.visitSingularStringField(value: self.clientMsgID, fieldNumber: 2)
@@ -1258,7 +1263,7 @@ extension Im_Protocol_MessageInfo: SwiftProtobuf.Message, SwiftProtobuf._Message
   }
 
   static func ==(lhs: Im_Protocol_MessageInfo, rhs: Im_Protocol_MessageInfo) -> Bool {
-    if lhs.messageID != rhs.messageID {return false}
+    if lhs.serverMsgID != rhs.serverMsgID {return false}
     if lhs.clientMsgID != rhs.clientMsgID {return false}
     if lhs.conversationID != rhs.conversationID {return false}
     if lhs.senderID != rhs.senderID {return false}
@@ -1314,7 +1319,7 @@ extension Im_Protocol_SendMessageRequest: SwiftProtobuf.Message, SwiftProtobuf._
 
 extension Im_Protocol_SendMessageResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".SendMessageResponse"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}error_code\0\u{3}error_msg\0\u{3}message_id\0\u{3}client_msg_id\0\u{1}seq\0\u{3}server_time\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}error_code\0\u{3}error_msg\0\u{3}server_msg_id\0\u{3}client_msg_id\0\u{1}seq\0\u{3}server_time\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1324,7 +1329,7 @@ extension Im_Protocol_SendMessageResponse: SwiftProtobuf.Message, SwiftProtobuf.
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularEnumField(value: &self.errorCode) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.errorMsg) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.messageID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.serverMsgID) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.clientMsgID) }()
       case 5: try { try decoder.decodeSingularInt64Field(value: &self.seq) }()
       case 6: try { try decoder.decodeSingularInt64Field(value: &self.serverTime) }()
@@ -1340,8 +1345,8 @@ extension Im_Protocol_SendMessageResponse: SwiftProtobuf.Message, SwiftProtobuf.
     if !self.errorMsg.isEmpty {
       try visitor.visitSingularStringField(value: self.errorMsg, fieldNumber: 2)
     }
-    if !self.messageID.isEmpty {
-      try visitor.visitSingularStringField(value: self.messageID, fieldNumber: 3)
+    if !self.serverMsgID.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverMsgID, fieldNumber: 3)
     }
     if !self.clientMsgID.isEmpty {
       try visitor.visitSingularStringField(value: self.clientMsgID, fieldNumber: 4)
@@ -1358,7 +1363,7 @@ extension Im_Protocol_SendMessageResponse: SwiftProtobuf.Message, SwiftProtobuf.
   static func ==(lhs: Im_Protocol_SendMessageResponse, rhs: Im_Protocol_SendMessageResponse) -> Bool {
     if lhs.errorCode != rhs.errorCode {return false}
     if lhs.errorMsg != rhs.errorMsg {return false}
-    if lhs.messageID != rhs.messageID {return false}
+    if lhs.serverMsgID != rhs.serverMsgID {return false}
     if lhs.clientMsgID != rhs.clientMsgID {return false}
     if lhs.seq != rhs.seq {return false}
     if lhs.serverTime != rhs.serverTime {return false}
@@ -1403,7 +1408,7 @@ extension Im_Protocol_PushMessage: SwiftProtobuf.Message, SwiftProtobuf._Message
 
 extension Im_Protocol_MessageAck: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".MessageAck"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}message_id\0\u{1}seq\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_msg_id\0\u{1}seq\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1411,7 +1416,7 @@ extension Im_Protocol_MessageAck: SwiftProtobuf.Message, SwiftProtobuf._MessageI
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.messageID) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.serverMsgID) }()
       case 2: try { try decoder.decodeSingularInt64Field(value: &self.seq) }()
       default: break
       }
@@ -1419,8 +1424,8 @@ extension Im_Protocol_MessageAck: SwiftProtobuf.Message, SwiftProtobuf._MessageI
   }
 
   func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.messageID.isEmpty {
-      try visitor.visitSingularStringField(value: self.messageID, fieldNumber: 1)
+    if !self.serverMsgID.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverMsgID, fieldNumber: 1)
     }
     if self.seq != 0 {
       try visitor.visitSingularInt64Field(value: self.seq, fieldNumber: 2)
@@ -1429,7 +1434,7 @@ extension Im_Protocol_MessageAck: SwiftProtobuf.Message, SwiftProtobuf._MessageI
   }
 
   static func ==(lhs: Im_Protocol_MessageAck, rhs: Im_Protocol_MessageAck) -> Bool {
-    if lhs.messageID != rhs.messageID {return false}
+    if lhs.serverMsgID != rhs.serverMsgID {return false}
     if lhs.seq != rhs.seq {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
@@ -1468,7 +1473,7 @@ extension Im_Protocol_BatchMessages: SwiftProtobuf.Message, SwiftProtobuf._Messa
 
 extension Im_Protocol_RevokeMessageRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".RevokeMessageRequest"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}message_id\0\u{3}conversation_id\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_msg_id\0\u{3}conversation_id\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1476,7 +1481,7 @@ extension Im_Protocol_RevokeMessageRequest: SwiftProtobuf.Message, SwiftProtobuf
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.messageID) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.serverMsgID) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.conversationID) }()
       default: break
       }
@@ -1484,8 +1489,8 @@ extension Im_Protocol_RevokeMessageRequest: SwiftProtobuf.Message, SwiftProtobuf
   }
 
   func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.messageID.isEmpty {
-      try visitor.visitSingularStringField(value: self.messageID, fieldNumber: 1)
+    if !self.serverMsgID.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverMsgID, fieldNumber: 1)
     }
     if !self.conversationID.isEmpty {
       try visitor.visitSingularStringField(value: self.conversationID, fieldNumber: 2)
@@ -1494,7 +1499,7 @@ extension Im_Protocol_RevokeMessageRequest: SwiftProtobuf.Message, SwiftProtobuf
   }
 
   static func ==(lhs: Im_Protocol_RevokeMessageRequest, rhs: Im_Protocol_RevokeMessageRequest) -> Bool {
-    if lhs.messageID != rhs.messageID {return false}
+    if lhs.serverMsgID != rhs.serverMsgID {return false}
     if lhs.conversationID != rhs.conversationID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
@@ -1538,7 +1543,7 @@ extension Im_Protocol_RevokeMessageResponse: SwiftProtobuf.Message, SwiftProtobu
 
 extension Im_Protocol_RevokeMessagePush: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".RevokeMessagePush"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}message_id\0\u{3}conversation_id\0\u{3}revoked_by\0\u{3}revoked_time\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_msg_id\0\u{3}conversation_id\0\u{3}revoked_by\0\u{3}revoked_time\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1546,7 +1551,7 @@ extension Im_Protocol_RevokeMessagePush: SwiftProtobuf.Message, SwiftProtobuf._M
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.messageID) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.serverMsgID) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.conversationID) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.revokedBy) }()
       case 4: try { try decoder.decodeSingularInt64Field(value: &self.revokedTime) }()
@@ -1556,8 +1561,8 @@ extension Im_Protocol_RevokeMessagePush: SwiftProtobuf.Message, SwiftProtobuf._M
   }
 
   func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.messageID.isEmpty {
-      try visitor.visitSingularStringField(value: self.messageID, fieldNumber: 1)
+    if !self.serverMsgID.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverMsgID, fieldNumber: 1)
     }
     if !self.conversationID.isEmpty {
       try visitor.visitSingularStringField(value: self.conversationID, fieldNumber: 2)
@@ -1572,7 +1577,7 @@ extension Im_Protocol_RevokeMessagePush: SwiftProtobuf.Message, SwiftProtobuf._M
   }
 
   static func ==(lhs: Im_Protocol_RevokeMessagePush, rhs: Im_Protocol_RevokeMessagePush) -> Bool {
-    if lhs.messageID != rhs.messageID {return false}
+    if lhs.serverMsgID != rhs.serverMsgID {return false}
     if lhs.conversationID != rhs.conversationID {return false}
     if lhs.revokedBy != rhs.revokedBy {return false}
     if lhs.revokedTime != rhs.revokedTime {return false}
@@ -1803,7 +1808,7 @@ extension Im_Protocol_SyncRangeResponse: SwiftProtobuf.Message, SwiftProtobuf._M
 
 extension Im_Protocol_ReadReceiptRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".ReadReceiptRequest"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}message_ids\0\u{3}conversation_id\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_msg_ids\0\u{3}conversation_id\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1811,7 +1816,7 @@ extension Im_Protocol_ReadReceiptRequest: SwiftProtobuf.Message, SwiftProtobuf._
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeRepeatedStringField(value: &self.messageIds) }()
+      case 1: try { try decoder.decodeRepeatedStringField(value: &self.serverMsgIds) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.conversationID) }()
       default: break
       }
@@ -1819,8 +1824,8 @@ extension Im_Protocol_ReadReceiptRequest: SwiftProtobuf.Message, SwiftProtobuf._
   }
 
   func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.messageIds.isEmpty {
-      try visitor.visitRepeatedStringField(value: self.messageIds, fieldNumber: 1)
+    if !self.serverMsgIds.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.serverMsgIds, fieldNumber: 1)
     }
     if !self.conversationID.isEmpty {
       try visitor.visitSingularStringField(value: self.conversationID, fieldNumber: 2)
@@ -1829,7 +1834,7 @@ extension Im_Protocol_ReadReceiptRequest: SwiftProtobuf.Message, SwiftProtobuf._
   }
 
   static func ==(lhs: Im_Protocol_ReadReceiptRequest, rhs: Im_Protocol_ReadReceiptRequest) -> Bool {
-    if lhs.messageIds != rhs.messageIds {return false}
+    if lhs.serverMsgIds != rhs.serverMsgIds {return false}
     if lhs.conversationID != rhs.conversationID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
@@ -1873,7 +1878,7 @@ extension Im_Protocol_ReadReceiptResponse: SwiftProtobuf.Message, SwiftProtobuf.
 
 extension Im_Protocol_ReadReceiptPush: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".ReadReceiptPush"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}message_ids\0\u{3}conversation_id\0\u{3}user_id\0\u{3}read_time\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_msg_ids\0\u{3}conversation_id\0\u{3}user_id\0\u{3}read_time\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1881,7 +1886,7 @@ extension Im_Protocol_ReadReceiptPush: SwiftProtobuf.Message, SwiftProtobuf._Mes
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeRepeatedStringField(value: &self.messageIds) }()
+      case 1: try { try decoder.decodeRepeatedStringField(value: &self.serverMsgIds) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.conversationID) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.userID) }()
       case 4: try { try decoder.decodeSingularInt64Field(value: &self.readTime) }()
@@ -1891,8 +1896,8 @@ extension Im_Protocol_ReadReceiptPush: SwiftProtobuf.Message, SwiftProtobuf._Mes
   }
 
   func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.messageIds.isEmpty {
-      try visitor.visitRepeatedStringField(value: self.messageIds, fieldNumber: 1)
+    if !self.serverMsgIds.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.serverMsgIds, fieldNumber: 1)
     }
     if !self.conversationID.isEmpty {
       try visitor.visitSingularStringField(value: self.conversationID, fieldNumber: 2)
@@ -1907,7 +1912,7 @@ extension Im_Protocol_ReadReceiptPush: SwiftProtobuf.Message, SwiftProtobuf._Mes
   }
 
   static func ==(lhs: Im_Protocol_ReadReceiptPush, rhs: Im_Protocol_ReadReceiptPush) -> Bool {
-    if lhs.messageIds != rhs.messageIds {return false}
+    if lhs.serverMsgIds != rhs.serverMsgIds {return false}
     if lhs.conversationID != rhs.conversationID {return false}
     if lhs.userID != rhs.userID {return false}
     if lhs.readTime != rhs.readTime {return false}

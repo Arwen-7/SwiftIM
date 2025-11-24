@@ -429,8 +429,8 @@ public class IMUser: Codable {
 
 /// 消息
 public class IMMessage: Codable {
-    public var messageID: String = ""
-    public var clientMsgID: String = ""
+    public var serverMsgID: String = ""  // ✅ 服务端消息 ID（由服务端生成）
+    public var clientMsgID: String = ""   // ✅ 客户端消息 ID（由客户端生成，作为主键）
     public var conversationID: String = ""
     public var conversationType: IMConversationType = .single
     public var senderID: String = ""
@@ -458,14 +458,15 @@ public class IMMessage: Codable {
     public init() {}
     
     enum CodingKeys: String, CodingKey {
-        case messageID, clientMsgID, conversationID, conversationType, senderID, receiverID
+        case serverMsgID
+        case clientMsgID, conversationID, conversationType, senderID, receiverID
         case groupID, messageType, content, extra, status, direction, seq
         case sendTime, serverTime, createTime, isRead, readBy, readTime, isDeleted, isRevoked, revokedBy, revokedTime, attachedInfo
     }
     
     public required init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        messageID = try container.decode(String.self, forKey: .messageID)
+        serverMsgID = try container.decodeIfPresent(String.self, forKey: .serverMsgID) ?? ""
         clientMsgID = try container.decodeIfPresent(String.self, forKey: .clientMsgID) ?? ""
         conversationID = try container.decodeIfPresent(String.self, forKey: .conversationID) ?? ""
         conversationType = try container.decode(IMConversationType.self, forKey: .conversationType)
@@ -493,7 +494,7 @@ public class IMMessage: Codable {
     
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(messageID, forKey: .messageID)
+        try container.encode(serverMsgID, forKey: .serverMsgID)
         try container.encode(clientMsgID, forKey: .clientMsgID)
         try container.encode(conversationID, forKey: .conversationID)
         try container.encode(conversationType, forKey: .conversationType)

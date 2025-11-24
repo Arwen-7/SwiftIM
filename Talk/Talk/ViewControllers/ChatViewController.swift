@@ -239,7 +239,7 @@ class ChatViewController: UIViewController {
         
         do {
             _ = try messageManager.sendMessage(message)
-            print("消息已提交到发送队列: \(message.messageID)")
+            print("消息已提交到发送队列: clientMsgID=\(message.clientMsgID)")
         } catch {
             DispatchQueue.main.async { [weak self] in
                 print("消息发送失败: \(error)")
@@ -347,8 +347,8 @@ extension ChatViewController: IMMessageListener {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             
-            // 检查是否已存在（避免重复）
-            if !self.messages.contains(where: { $0.messageID == message.messageID }) {
+            // 检查是否已存在（避免重复，只比较 clientMsgID）
+            if !self.messages.contains(where: { $0.clientMsgID == message.clientMsgID }) {
                 // 添加新消息
                 self.messages.append(message)
                 
@@ -369,8 +369,8 @@ extension ChatViewController: IMMessageListener {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             
-            // 查找并更新消息
-            if let index = self.messages.firstIndex(where: { $0.clientMsgID == message.clientMsgID || $0.messageID == message.messageID }) {
+            // 查找并更新消息（只使用 clientMsgID 匹配）
+            if let index = self.messages.firstIndex(where: { $0.clientMsgID == message.clientMsgID }) {
                 self.messages[index] = message
                 let indexPath = IndexPath(row: index, section: 0)
                 self.tableView.reloadRows(at: [indexPath], with: .none)
@@ -378,7 +378,7 @@ extension ChatViewController: IMMessageListener {
             
             // 如果发送失败，显示提示
             if message.status == .failed {
-                print("消息发送失败: \(message.messageID)")
+                print("消息发送失败: clientMsgID=\(message.clientMsgID)")
                 // 可以在这里更新 UI 显示发送失败状态
             }
         }
@@ -391,7 +391,8 @@ extension ChatViewController: IMMessageListener {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             
-            if let index = self.messages.firstIndex(where: { $0.messageID == message.messageID }) {
+            // 查找消息（只使用 clientMsgID 匹配）
+            if let index = self.messages.firstIndex(where: { $0.clientMsgID == message.clientMsgID }) {
                 self.messages[index] = message
                 
                 let indexPath = IndexPath(row: index, section: 0)

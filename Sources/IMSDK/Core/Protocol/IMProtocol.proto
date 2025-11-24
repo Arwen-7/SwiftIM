@@ -155,7 +155,7 @@ message KickOutNotification {
 
 // 通用消息信息（各场景复用）
 message MessageInfo {
-    string message_id = 1;       // 服务器消息 ID（发送时为空，由服务端生成）
+    string server_msg_id = 1;    // ✅ 服务器消息 ID（发送时为空，由服务端生成）
     string client_msg_id = 2;    // 客户端消息 ID
     string conversation_id = 3;  // 会话 ID
     string sender_id = 4;        // 发送者 ID
@@ -181,7 +181,7 @@ message SendMessageRequest {
 message SendMessageResponse {
     ErrorCode error_code = 1;
     string error_msg = 2;
-    string message_id = 3;       // 服务器消息 ID
+    string server_msg_id = 3;    // ✅ 服务器消息 ID
     string client_msg_id = 4;    // 客户端消息 ID（用于匹配本地消息）
     int64 seq = 5;               // 消息序列号
     int64 server_time = 6;       // 服务器时间
@@ -194,7 +194,7 @@ message PushMessage {
 
 // 消息 ACK
 message MessageAck {
-    string message_id = 1;
+    string server_msg_id = 1;  // ✅ 服务器消息 ID
     int64 seq = 2;
 }
 
@@ -205,7 +205,7 @@ message BatchMessages {
 
 // 撤回消息请求
 message RevokeMessageRequest {
-    string message_id = 1;
+    string server_msg_id = 1;  // ✅ 服务器消息 ID
     string conversation_id = 2;
 }
 
@@ -217,7 +217,7 @@ message RevokeMessageResponse {
 
 // 撤回消息推送
 message RevokeMessagePush {
-    string message_id = 1;
+    string server_msg_id = 1;  // ✅ 服务器消息 ID
     string conversation_id = 2;
     string revoked_by = 3;
     int64 revoked_time = 4;
@@ -275,7 +275,7 @@ message SyncRangeResponse {
 
 // 已读回执请求
 message ReadReceiptRequest {
-    repeated string message_ids = 1;
+    repeated string server_msg_ids = 1;  // ✅ 服务器消息 ID 列表
     string conversation_id = 2;
 }
 
@@ -287,7 +287,7 @@ message ReadReceiptResponse {
 
 // 已读回执推送
 message ReadReceiptPush {
-    repeated string message_ids = 1;
+    repeated string server_msg_ids = 1;  // ✅ 服务器消息 ID 列表
     string conversation_id = 2;
     string user_id = 3;
     int64 read_time = 4;

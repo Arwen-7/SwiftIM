@@ -1102,12 +1102,14 @@ public final class IMClient {
             
             // ✅ 通过 .message 访问 MessageInfo 字段
             let msgInfo = pushMsg.message
-            IMLogger.shared.debug("Received push message: id=\(msgInfo.messageID), seq=\(msgInfo.seq)")
+            IMLogger.shared.debug("Received push message: serverMsgID=\(msgInfo.serverMsgID), clientMsgID=\(msgInfo.clientMsgID), seq=\(msgInfo.seq)")
             
             // 转换为 IMMessage
             let contentString = String(data: msgInfo.content, encoding: .utf8) ?? ""
             let message = IMMessage()
-            message.messageID = msgInfo.messageID
+            message.serverMsgID = msgInfo.serverMsgID  // ✅ 服务端消息 ID
+            // ✅ 如果没有 clientMsgID，生成一个（用于作为数据库主键）
+            message.clientMsgID = msgInfo.clientMsgID.isEmpty ? IMUtils.generateUUID() : msgInfo.clientMsgID
             message.conversationID = msgInfo.conversationID
             message.messageType = IMMessageType(rawValue: Int(msgInfo.messageType)) ?? .text
             message.content = contentString
@@ -1134,22 +1136,22 @@ public final class IMClient {
             // 使用 Protobuf 解析发送响应
             let sendRsp = try Im_Protocol_SendMessageResponse(serializedData: body)
             
-            IMLogger.shared.debug("Received send message response: clientMsgID=\(sendRsp.clientMsgID), serverMessageID=\(sendRsp.messageID), errorCode=\(sendRsp.errorCode), seq=\(sendRsp.seq)")
+            IMLogger.shared.debug("Received send message response: clientMsgID=\(sendRsp.clientMsgID), serverMessageID=\(sendRsp.serverMsgID), errorCode=\(sendRsp.errorCode), seq=\(sendRsp.seq)")
             
             if sendRsp.errorCode == .errSuccess {
                 // 发送成功，通知消息管理器（传递 clientMsgID 和 serverMessageID）
                 messageManager?.handleMessageAck(
                     clientMsgID: sendRsp.clientMsgID,      // ✅ 客户端 ID（用于匹配本地消息）
-                    serverMessageID: sendRsp.messageID,    // ✅ 服务端 ID（用于更新本地 messageID）
+                    serverMessageID: sendRsp.serverMsgID,    // ✅ 服务端 ID（用于更新本地 serverMsgID）
                     status: .sent
                 )
-                IMLogger.shared.info("✅ Message sent successfully: clientMsgID=\(sendRsp.clientMsgID) -> serverID=\(sendRsp.messageID)")
+                IMLogger.shared.info("✅ Message sent successfully: clientMsgID=\(sendRsp.clientMsgID) -> serverID=\(sendRsp.serverMsgID)")
             } else {
                 // 发送失败（仍然需要更新本地消息状态）
                 IMLogger.shared.error("❌ Message send failed: clientMsgID=\(sendRsp.clientMsgID), error: \(sendRsp.errorMsg)")
                 messageManager?.handleMessageAck(
                     clientMsgID: sendRsp.clientMsgID,
-                    serverMessageID: sendRsp.messageID,  // ✅ 直接使用 messageID，即使为空也不要紧
+                    serverMessageID: sendRsp.serverMsgID,  // ✅ 直接使用 messageID，即使为空也不要紧
                     status: .failed
                 )
             }
@@ -1266,7 +1268,9 @@ public final class IMClient {
                 let msgInfo = pbMsg.message
                 let contentString = String(data: msgInfo.content, encoding: .utf8) ?? ""
                 let message = IMMessage()
-                message.messageID = msgInfo.messageID
+                message.serverMsgID = msgInfo.serverMsgID  // ✅ 服务端消息 ID
+                // ✅ 如果没有 clientMsgID，生成一个（用于作为数据库主键）
+                message.clientMsgID = msgInfo.clientMsgID.isEmpty ? IMUtils.generateUUID() : msgInfo.clientMsgID
                 message.conversationID = msgInfo.conversationID
                 message.messageType = IMMessageType(rawValue: Int(msgInfo.messageType)) ?? .text
                 message.content = contentString
@@ -1299,11 +1303,11 @@ public final class IMClient {
             // 使用 Protobuf 解析撤回消息推送
             let revokeMsg = try Im_Protocol_RevokeMessagePush(serializedData: body)
             
-            IMLogger.shared.info("Received revoke message: id=\(revokeMsg.messageID)")
+            IMLogger.shared.info("Received revoke message: id=\(revokeMsg.serverMsgID)")
             
             // 调用消息管理器处理撤回（会自动更新数据库、通知监听器）
             messageManager?.handleRevokeNotification(
-                messageID: revokeMsg.messageID,
+                messageID: revokeMsg.serverMsgID,
                 revokerID: revokeMsg.revokedBy,
                 revokeTime: revokeMsg.revokedTime
             )
@@ -1318,7 +1322,7 @@ public final class IMClient {
             // 使用 Protobuf 解析已读回执推送
             let readReceipt = try Im_Protocol_ReadReceiptPush(serializedData: body)
             
-            IMLogger.shared.info("📖 Received read receipt push: conversation=\(readReceipt.conversationID), user=\(readReceipt.userID), count=\(readReceipt.messageIds.count)")
+            IMLogger.shared.info("📖 Received read receipt push: conversation=\(readReceipt.conversationID), user=\(readReceipt.userID), count=\(readReceipt.serverMsgIds.count)")
             
             // 如果是其他端标记为已读，则本端也应该清除未读数
             // 注意：这里只处理多端同步的情况（同一个用户在不同设备上的同步）
@@ -1340,7 +1344,7 @@ public final class IMClient {
                 // 通知监听器（可用于显示已读回执）
                 messageManager?.notifyReadReceiptReceived(
                     conversationID: readReceipt.conversationID,
-                    messageIDs: readReceipt.messageIds,
+                    messageIDs: readReceipt.serverMsgIds,
                     readerID: readReceipt.userID,
                     readTime: readReceipt.readTime
                 )
@@ -1567,17 +1571,17 @@ extension IMClient: IMNetworkMonitorDelegate {
     /// 处理 TCP 发送消息响应
     private func handleTCPSendMessageResponse(_ response: Im_Protocol_SendMessageResponse, sequence: UInt32) {
         if response.errorCode == .errSuccess {
-            IMLogger.shared.debug("Message sent successfully: clientMsgID=\(response.clientMsgID) -> serverID=\(response.messageID)")
+            IMLogger.shared.debug("Message sent successfully: clientMsgID=\(response.clientMsgID) -> serverID=\(response.serverMsgID)")
             messageManager?.handleMessageAck(
                 clientMsgID: response.clientMsgID,
-                serverMessageID: response.messageID,
+                serverMessageID: response.serverMsgID,
                 status: .sent
             )
         } else {
             IMLogger.shared.error("Message send failed: clientMsgID=\(response.clientMsgID), error: \(response.errorMsg)")
             messageManager?.handleMessageAck(
                 clientMsgID: response.clientMsgID,
-                serverMessageID: response.messageID,  // ✅ 直接使用 messageID，即使为空也不要紧
+                serverMessageID: response.serverMsgID,  // ✅ 直接使用 serverMsgID，即使为空也不要紧
                 status: .failed
             )
         }
@@ -1589,7 +1593,9 @@ extension IMClient: IMNetworkMonitorDelegate {
         let msgInfo = pushMsg.message
         let contentString = String(data: msgInfo.content, encoding: .utf8) ?? ""
         let message = IMMessage()
-        message.messageID = msgInfo.messageID
+        message.serverMsgID = msgInfo.serverMsgID  // ✅ 服务端消息 ID
+        // ✅ 如果没有 clientMsgID，生成一个（用于作为数据库主键）
+        message.clientMsgID = msgInfo.clientMsgID.isEmpty ? IMUtils.generateUUID() : msgInfo.clientMsgID
         message.conversationID = msgInfo.conversationID
         message.messageType = IMMessageType(rawValue: Int(msgInfo.messageType)) ?? .text
         message.content = contentString
@@ -1619,7 +1625,7 @@ extension IMClient: IMNetworkMonitorDelegate {
     private func handleTCPRevokeMessagePush(_ push: Im_Protocol_RevokeMessagePush) {
         // 调用消息管理器处理撤回（会自动更新数据库、通知监听器）
         messageManager?.handleRevokeNotification(
-            messageID: push.messageID,
+            messageID: push.serverMsgID,
             revokerID: push.revokedBy,
             revokeTime: push.revokedTime
         )
@@ -1627,7 +1633,7 @@ extension IMClient: IMNetworkMonitorDelegate {
     
     /// 处理 TCP 已读回执推送
     private func handleTCPReadReceiptPush(_ push: Im_Protocol_ReadReceiptPush) {
-        for messageID in push.messageIds {
+        for messageID in push.serverMsgIds {  // ✅ 使用 serverMsgIds
             do {
                 try databaseManager?.updateMessageReadStatus(
                     messageID: messageID,

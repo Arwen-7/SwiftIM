@@ -368,7 +368,7 @@ public final class IMConversationManager {
         // 创建已读回执请求（messageIds 留空，服务端根据会话ID批量处理）
         var request = Im_Protocol_ReadReceiptRequest()
         request.conversationID = conversationID
-        request.messageIds = []  // ✅ 空数组表示标记该会话所有未读消息
+        request.serverMsgIds = []  // ✅ 空数组表示标记该会话所有未读消息
         
         do {
             let requestData = try request.serializedData()
@@ -448,7 +448,8 @@ extension IMConversationManager: IMMessageListener {
     public func onMessageStatusChanged(_ message: IMMessage) {
         // 如果消息状态改变，可能需要更新会话
         if let conversation = getConversation(conversationID: message.conversationID) {
-            if conversation.lastMessage?.messageID == message.messageID {
+            // ✅ 只比较 clientMsgID（因为 clientMsgID 肯定会有）
+            if conversation.lastMessage?.clientMsgID == message.clientMsgID {
                 notifyListeners { $0.onConversationUpdated(conversation) }
             }
         }

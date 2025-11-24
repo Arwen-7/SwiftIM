@@ -110,7 +110,7 @@ extension IMDatabaseManager {
     private func insertMessage(_ message: IMMessage) throws {
         let sql = """
             INSERT INTO messages (
-                client_msg_id, message_id,
+                client_msg_id, server_msg_id,
                 conversation_id, sender_id, receiver_id, group_id,
                 message_type, content, extra,
                 status, direction, send_time, server_time, seq,
@@ -134,7 +134,7 @@ extension IMDatabaseManager {
         
         // ✅ client_msg_id 作为主键，放在第一位
         sqlite3_bind_text(statement, 1, (message.clientMsgID as NSString).utf8String, -1, nil)
-        sqlite3_bind_text(statement, 2, (message.messageID as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(statement, 2, (message.serverMsgID as NSString).utf8String, -1, nil)
         sqlite3_bind_text(statement, 3, (message.conversationID as NSString).utf8String, -1, nil)
         sqlite3_bind_text(statement, 4, (message.senderID as NSString).utf8String, -1, nil)
         sqlite3_bind_text(statement, 5, (message.receiverID as NSString).utf8String, -1, nil)
@@ -164,7 +164,7 @@ extension IMDatabaseManager {
     private func updateMessage(_ message: IMMessage) throws {
         let sql = """
             UPDATE messages SET
-                message_id = ?,
+                server_msg_id = ?,
                 content = ?, extra = ?,
                 status = ?, server_time = ?, seq = ?,
                 is_read = ?, is_deleted = ?, is_revoked = ?,
@@ -185,8 +185,8 @@ extension IMDatabaseManager {
         
         let currentTime = Int64(Date().timeIntervalSince1970 * 1000)
         
-        // ✅ 更新 message_id（服务端 ID）
-        sqlite3_bind_text(statement, 1, (message.messageID as NSString).utf8String, -1, nil)
+        // ✅ 更新 server_msg_id（服务端 ID）
+        sqlite3_bind_text(statement, 1, (message.serverMsgID as NSString).utf8String, -1, nil)
         sqlite3_bind_text(statement, 2, (message.content as NSString).utf8String, -1, nil)
         sqlite3_bind_text(statement, 3, (message.extra as NSString).utf8String, -1, nil)
         sqlite3_bind_int(statement, 4, Int32(message.status.rawValue))
@@ -244,7 +244,7 @@ extension IMDatabaseManager {
         return message
     }
     
-    /// 获取单条消息（通过 message_id，索引查询）
+    /// 获取单条消息（通过 server_msg_id，索引查询）
     /// - Parameter messageID: 服务端消息 ID
     /// - Returns: 消息对象
     public func getMessage(messageID: String) -> IMMessage? {
@@ -253,7 +253,7 @@ extension IMDatabaseManager {
         lock.lock()
         defer { lock.unlock() }
         
-        let sql = "SELECT * FROM messages WHERE message_id = ? LIMIT 1;"
+        let sql = "SELECT * FROM messages WHERE server_msg_id = ? LIMIT 1;"
         
         var statement: OpaquePointer?
         
@@ -446,16 +446,16 @@ extension IMDatabaseManager {
         return false
     }
     
-    /// 解析消息（✅ 字段顺序：client_msg_id (0), message_id (1), ...）
+    /// 解析消息（✅ 字段顺序：client_msg_id (0), server_msg_id (1), ...）
     private func parseMessage(from statement: OpaquePointer?) -> IMMessage {
         let message = IMMessage()
         
         // ✅ client_msg_id 是主键，在第一位
         message.clientMsgID = String(cString: sqlite3_column_text(statement, 0))
         
-        // ✅ message_id 在第二位
-        if let messageID = sqlite3_column_text(statement, 1) {
-            message.messageID = String(cString: messageID)
+        // ✅ server_msg_id 在第二位
+        if let serverMsgID = sqlite3_column_text(statement, 1) {
+            message.serverMsgID = String(cString: serverMsgID)
         }
         
         message.conversationID = String(cString: sqlite3_column_text(statement, 2))
@@ -507,12 +507,12 @@ extension IMDatabaseManager {
         IMLogger.shared.database("Delete message by clientMsgID", elapsed: elapsed)
     }
     
-    /// 删除消息（通过 message_id，兼容方法）
+    /// 删除消息（通过 server_msg_id，兼容方法）
     /// - Parameter messageID: 服务端消息 ID
     public func deleteMessage(messageID: String) throws {
         let startTime = Date()
         
-        try execute(sql: "DELETE FROM messages WHERE message_id = '\(messageID)';")
+        try execute(sql: "DELETE FROM messages WHERE server_msg_id = '\(messageID)';")
         
         let elapsed = Date().timeIntervalSince(startTime)
         IMLogger.shared.database("Delete message by messageID", elapsed: elapsed)
@@ -672,24 +672,6 @@ extension IMDatabaseManager {
         SET status = \(status.rawValue),
             update_time = \(IMUtils.currentTimeMillis())
         WHERE client_msg_id = '\(clientMsgID)';
-        """
-        
-        lock.lock()
-        defer { lock.unlock() }
-        
-        try execute(sql: sql)
-    }
-    
-    /// 更新消息状态（通过 message_id，兼容方法）
-    /// - Parameters:
-    ///   - messageID: 服务端消息 ID
-    ///   - status: 消息状态
-    public func updateMessageStatus(messageID: String, status: IMMessageStatus) throws {
-        let sql = """
-        UPDATE messages 
-        SET status = \(status.rawValue),
-            update_time = \(IMUtils.currentTimeMillis())
-        WHERE message_id = '\(messageID)';
         """
         
         lock.lock()

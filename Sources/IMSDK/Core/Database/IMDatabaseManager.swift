@@ -179,7 +179,7 @@ public final class IMDatabaseManager: IMDatabaseProtocol {
         try execute(sql: """
             CREATE TABLE IF NOT EXISTS messages (
                 client_msg_id TEXT PRIMARY KEY,
-                message_id TEXT,
+                server_msg_id TEXT,
                 conversation_id TEXT NOT NULL,
                 sender_id TEXT NOT NULL,
                 receiver_id TEXT,
@@ -204,8 +204,8 @@ public final class IMDatabaseManager: IMDatabaseProtocol {
         
         // 创建索引
         try execute(sql: """
-            CREATE INDEX IF NOT EXISTS idx_messages_message_id 
-                ON messages(message_id);
+            CREATE INDEX IF NOT EXISTS idx_messages_server_msg_id 
+                ON messages(server_msg_id);
             CREATE INDEX IF NOT EXISTS idx_messages_conversation 
                 ON messages(conversation_id, send_time DESC);
             CREATE INDEX IF NOT EXISTS idx_messages_seq 

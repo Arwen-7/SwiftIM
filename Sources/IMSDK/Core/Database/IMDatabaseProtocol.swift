@@ -60,7 +60,7 @@ public protocol IMDatabaseProtocol: AnyObject {
     func getMessagesBefore(conversationID: String, beforeTime: Int64, limit: Int) -> [IMMessage]
     
     /// 更新消息状态
-    func updateMessageStatus(messageID: String, status: IMMessageStatus) throws
+    func updateMessageStatus(clientMsgID: String, status: IMMessageStatus) throws
     
     /// 删除消息
     func deleteMessage(messageID: String) throws

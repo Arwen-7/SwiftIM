@@ -632,14 +632,16 @@ extension IMMessageSyncManager {
         
         // 转换为 IMMessage 对象（✅ 使用 MessageInfo 结构）
         let messages = response.messages.compactMap { msgInfo -> IMMessage? in
-            guard !msgInfo.messageID.isEmpty,
+            guard !msgInfo.serverMsgID.isEmpty,
                   !msgInfo.conversationID.isEmpty,
                   !msgInfo.senderID.isEmpty else {
                 return nil
             }
             
             let message = IMMessage()
-            message.messageID = msgInfo.messageID
+            message.serverMsgID = msgInfo.serverMsgID  // ✅ 服务端消息 ID
+            // ✅ 如果没有 clientMsgID，生成一个（用于作为数据库主键）
+            message.clientMsgID = msgInfo.clientMsgID.isEmpty ? IMUtils.generateUUID() : msgInfo.clientMsgID
             message.conversationID = msgInfo.conversationID
             message.senderID = msgInfo.senderID
             message.seq = msgInfo.seq
@@ -799,14 +801,16 @@ extension IMMessageSyncManager {
         
         // 转换为 IMMessage 对象（✅ 使用 MessageInfo 结构）
         let messages = response.messages.compactMap { msgInfo -> IMMessage? in
-            guard !msgInfo.messageID.isEmpty,
+            guard !msgInfo.serverMsgID.isEmpty,
                   !msgInfo.conversationID.isEmpty,
                   !msgInfo.senderID.isEmpty else {
                 return nil
             }
             
             let message = IMMessage()
-            message.messageID = msgInfo.messageID
+            message.serverMsgID = msgInfo.serverMsgID  // ✅ 服务端消息 ID
+            // ✅ 如果没有 clientMsgID，生成一个（用于作为数据库主键）
+            message.clientMsgID = msgInfo.clientMsgID.isEmpty ? IMUtils.generateUUID() : msgInfo.clientMsgID
             message.conversationID = msgInfo.conversationID
             message.senderID = msgInfo.senderID
             message.seq = msgInfo.seq

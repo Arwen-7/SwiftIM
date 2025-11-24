@@ -35,10 +35,10 @@ extension IMMessageManager {
     @discardableResult
     public func sendMessageHybrid(_ message: IMMessage) -> IMMessage {
         let startTime = Date()
-        IMLogger.shared.verbose("Sending message (hybrid): \(message.messageID)")
+        IMLogger.shared.verbose("Sending message (hybrid): clientMsgID=\(message.clientMsgID)")
         
-        // 1. ✅ 立即添加到缓存（~1ms）
-        messageCache.set(message, forKey: message.messageID)
+        // 1. ✅ 立即添加到缓存（~1ms，使用 clientMsgID 作为 key）
+        messageCache.set(message, forKey: message.clientMsgID)
         
         // 2. ✅ 立即通知界面更新（~1ms）
         notifyListeners { $0.onMessageReceived(message) }
@@ -51,7 +51,7 @@ extension IMMessageManager {
             // 关键消息：同步写入（~8-10ms）
             do {
                 try database.saveMessage(message)
-                IMLogger.shared.debug("Message saved synchronously (critical): \(message.messageID)")
+                IMLogger.shared.debug("Message saved synchronously (critical): clientMsgID=\(message.clientMsgID)")
             } catch {
                 IMLogger.shared.error("Failed to save critical message: \(error)")
             }
@@ -63,9 +63,9 @@ extension IMMessageManager {
                 let dbStartTime = Date()
                 do {
                     try self?.database.saveMessage(message)
-                    IMConsistencyGuard.shared.markWritten(message.messageID)
+                    IMConsistencyGuard.shared.markWritten(message.clientMsgID)
                     let dbElapsed = Date().timeIntervalSince(dbStartTime) * 1000
-                    IMLogger.shared.debug("Message saved asynchronously: \(message.messageID) (\(String(format: "%.2f", dbElapsed))ms)")
+                    IMLogger.shared.debug("Message saved asynchronously: clientMsgID=\(message.clientMsgID) (\(String(format: "%.2f", dbElapsed))ms)")
                 } catch {
                     IMLogger.shared.error("Failed to save message asynchronously: \(error)")
                     // 失败后会在应用启动时从持久化文件恢复
@@ -147,11 +147,11 @@ extension IMMessageManager {
     @discardableResult
     public func sendMessageFast(_ message: IMMessage) -> IMMessage {
         let startTime = Date()
-        IMLogger.shared.verbose("Sending message (fast): \(message.messageID)")
+        IMLogger.shared.verbose("Sending message (fast): clientMsgID=\(message.clientMsgID)")
         
-        // 1. ✅ 立即添加到缓存（~1ms）
+        // 1. ✅ 立即添加到缓存（~1ms，使用 clientMsgID 作为 key）
         let cacheStart = Date()
-        messageCache.set(message, forKey: message.messageID)
+        messageCache.set(message, forKey: message.clientMsgID)
         let cacheElapsed = Date().timeIntervalSince(cacheStart) * 1000
         
         // 2. ✅ 立即通知界面更新（~1ms，UI 立即响应）
@@ -216,7 +216,7 @@ extension IMMessageManager {
     /// - Parameter message: 收到的消息
     internal func handleReceivedMessageFast(_ message: IMMessage) {
         let startTime = Date()
-        IMLogger.shared.verbose("Message received (fast): \(message.messageID)")
+        IMLogger.shared.verbose("Message received (fast): clientMsgID=\(message.clientMsgID), serverMsgID=\(message.serverMsgID.isEmpty ? "(empty)" : message.serverMsgID)")
         
         // ============= 同步部分（关键路径，必须快速完成）=============
         
@@ -225,9 +225,9 @@ extension IMMessageManager {
         message.direction = .receive
         let directionElapsed = Date().timeIntervalSince(directionStart) * 1000
         
-        // 2. ✅ 立即添加到缓存（~1ms）
+        // 2. ✅ 立即添加到缓存（~1ms，使用 clientMsgID 作为 key）
         let cacheStart = Date()
-        messageCache.set(message, forKey: message.messageID)
+        messageCache.set(message, forKey: message.clientMsgID)
         let cacheElapsed = Date().timeIntervalSince(cacheStart) * 1000
         
         // 3. ✅ 立即通知监听器（~1-2ms，UI 立即显示！）
@@ -235,9 +235,11 @@ extension IMMessageManager {
         notifyListeners { $0.onMessageReceived(message) }
         let notifyElapsed = Date().timeIntervalSince(notifyStart) * 1000
         
-        // 4. ✅ 立即发送 ACK（~2ms，告知服务器已收到）
+        // 4. ✅ 立即发送 ACK（~2ms，告知服务器已收到，使用 serverMsgID）
         let ackStart = Date()
-        sendMessageAck(messageID: message.messageID, status: .delivered)
+        if !message.serverMsgID.isEmpty {
+            sendMessageAck(messageID: message.serverMsgID, status: .delivered)
+        }
         let ackElapsed = Date().timeIntervalSince(ackStart) * 1000
         
         let syncElapsed = Date().timeIntervalSince(startTime) * 1000
@@ -515,8 +517,8 @@ public final class IMConsistencyGuard {
     /// - Parameter message: 待写入的消息
     public func markPending(_ message: IMMessage) {
         lock.lock()
-        unwrittenMessages.insert(message.messageID)
-        pendingMessages[message.messageID] = message
+        unwrittenMessages.insert(message.clientMsgID)  // ✅ 使用 clientMsgID 作为 key
+        pendingMessages[message.clientMsgID] = message
         lock.unlock()
         
         // ✅ 立即持久化到文件（~1ms，不阻塞）
@@ -551,7 +553,8 @@ public final class IMConsistencyGuard {
                 // 简化的消息数据（只保存必要字段）
                 let simplified = messages.map { message in
                     return [
-                        "messageID": message.messageID,
+                        "serverMsgID": message.serverMsgID,
+                        "clientMsgID": message.clientMsgID,
                         "conversationID": message.conversationID,
                         "senderID": message.senderID,
                         "receiverID": message.receiverID,
@@ -588,7 +591,8 @@ public final class IMConsistencyGuard {
             var messages: [IMMessage] = []
             for dict in array {
                 let message = IMMessage()
-                message.messageID = dict["messageID"] as? String ?? ""
+                message.serverMsgID = dict["serverMsgID"] as? String ?? ""
+                message.clientMsgID = dict["clientMsgID"] as? String ?? IMUtils.generateUUID()
                 message.conversationID = dict["conversationID"] as? String ?? ""
                 message.senderID = dict["senderID"] as? String ?? ""
                 message.receiverID = dict["receiverID"] as? String ?? ""

@@ -266,7 +266,7 @@ public final class IMMessageManager {
                 // 应该等收到服务器的 ACK 后再更新状态
                 // 消息状态保持为 .sending，等待 ACK
                 
-                IMLogger.shared.debug("Message sent to transport layer: \(message.messageID)")
+                IMLogger.shared.debug("Message sent to transport layer: clientMsgID=\(message.clientMsgID)")
                 
                 // ✅ 返回 true：成功提交到传输层发送缓冲区
                 // ⚠️ 这不代表服务器收到！消息仍保留在队列中，等待 ACK
@@ -288,7 +288,7 @@ public final class IMMessageManager {
         var sendRequest = Im_Protocol_SendMessageRequest()
         
         // ✅ 通过 .message 访问 MessageInfo 字段
-        sendRequest.message.clientMsgID = message.messageID
+        sendRequest.message.clientMsgID = message.clientMsgID
         sendRequest.message.conversationID = message.conversationID
         sendRequest.message.senderID = message.senderID
         sendRequest.message.receiverID = message.receiverID
@@ -308,7 +308,7 @@ public final class IMMessageManager {
     
     /// 处理收到的消息
     public func handleReceivedMessage(_ message: IMMessage) {
-        IMLogger.shared.info("Message received: \(message.messageID)")
+        IMLogger.shared.info("Message received: serverMsgID=\(message.serverMsgID.isEmpty ? "(empty)" : message.serverMsgID), clientMsgID=\(message.clientMsgID)")
         
         // 设置消息方向
         message.direction = .receive
@@ -328,15 +328,17 @@ public final class IMMessageManager {
             IMLogger.shared.error("Failed to save received message: \(error)")
         }
         
-        // 步骤 3：添加到缓存
-        messageCache.set(message, forKey: message.messageID)
+        // 步骤 3：添加到缓存（使用 clientMsgID 作为 key，因为它是主键）
+        messageCache.set(message, forKey: message.clientMsgID)
         
         // 步骤 4：通知监听器（包括 IMConversationManager）
         // IMConversationManager 会负责更新未读数
         notifyListeners { $0.onMessageReceived(message) }
         
-        // 步骤 5：发送已送达确认
-        sendMessageAck(messageID: message.messageID, status: .delivered)
+        // 步骤 5：发送已送达确认（使用 serverMsgID）
+        if !message.serverMsgID.isEmpty {
+            sendMessageAck(messageID: message.serverMsgID, status: .delivered)
+        }
     }
     
     /// 处理同步的历史消息（批量）
@@ -346,9 +348,9 @@ public final class IMMessageManager {
         
         IMLogger.shared.info("📥 Processing \(messages.count) synced messages")
         
-        // 批量添加到缓存
+        // 批量添加到缓存（使用 clientMsgID 作为 key，因为它是主键）
         for message in messages {
-            messageCache.set(message, forKey: message.messageID)
+            messageCache.set(message, forKey: message.clientMsgID)
         }
         
         // 通知监听器（会触发会话列表更新）
@@ -373,10 +375,10 @@ public final class IMMessageManager {
         
         // 从缓存中查找消息（使用 clientMsgID 作为 key）
         if let message = messageCache.get(forKey: clientMsgID) {
-            // 更新消息状态和 messageID
+            // 更新消息状态和 serverMsgID
             message.status = status
             if !serverMessageID.isEmpty {
-                message.messageID = serverMessageID  // ✅ 更新为服务端 ID
+                message.serverMsgID = serverMessageID  // ✅ 更新为服务端 ID
             }
             
             // ✅ 简化：直接保存消息（主键是 clientMsgID，不会改变）
@@ -394,7 +396,7 @@ public final class IMMessageManager {
                 
                 message.status = status
                 if !serverMessageID.isEmpty {
-                    message.messageID = serverMessageID
+                    message.serverMsgID = serverMessageID
                 }
                 
                 // ✅ 简化：直接保存消息
@@ -417,18 +419,18 @@ public final class IMMessageManager {
     
     /// 处理消息发送失败（重试次数耗尽）
     private func handleMessageSendFailed(_ message: IMMessage) {
-        IMLogger.shared.error("Message send failed permanently: \(message.messageID)")
+        IMLogger.shared.error("Message send failed permanently: \(message.clientMsgID)")
         
         // 更新数据库状态为失败
         do {
-            try database.updateMessageStatus(messageID: message.messageID, status: .failed)
+            try database.updateMessageStatus(clientMsgID: message.clientMsgID, status: .failed)
         } catch {
             IMLogger.shared.error("Failed to update message status to failed: \(error)")
         }
         
         // 更新缓存
         message.status = .failed
-        messageCache.set(message, forKey: message.messageID)
+        messageCache.set(message, forKey: message.clientMsgID)
         
         // 通知界面
         notifyListeners { $0.onMessageStatusChanged(message) }
@@ -449,7 +451,7 @@ public final class IMMessageManager {
         do {
             // 使用 Protobuf 编码消息 ACK
             var ack = Im_Protocol_MessageAck()
-            ack.messageID = messageID
+            ack.serverMsgID = messageID  // ✅ 使用 serverMsgID
             ack.seq = 0 // 序列号由传输层管理
             
             let data = try ack.serializedData()
@@ -839,7 +841,7 @@ extension IMMessageManager {
         
         // 创建消息对象
         let message = IMMessage()
-        message.messageID = UUID().uuidString
+        message.clientMsgID = IMUtils.generateUUID()
         message.conversationID = conversationID
         message.messageType = .image
         message.status = .sending
@@ -930,7 +932,7 @@ extension IMMessageManager {
         
         // 创建消息对象
         let message = IMMessage()
-        message.messageID = UUID().uuidString
+        message.clientMsgID = IMUtils.generateUUID()
         message.conversationID = conversationID
         message.messageType = .audio
         message.status = .sending
@@ -996,7 +998,7 @@ extension IMMessageManager {
         
         // 创建消息对象
         let message = IMMessage()
-        message.messageID = UUID().uuidString
+        message.clientMsgID = IMUtils.generateUUID()
         message.conversationID = conversationID
         message.messageType = .video
         message.status = .sending
@@ -1061,7 +1063,7 @@ extension IMMessageManager {
         
         // 创建消息对象
         let message = IMMessage()
-        message.messageID = UUID().uuidString
+        message.clientMsgID = IMUtils.generateUUID()
         message.conversationID = conversationID
         message.messageType = .file
         message.status = .sending
@@ -1224,7 +1226,7 @@ extension IMMessageManager {
         
         // 3. 创建消息
         let message = IMMessage()
-        message.messageID = UUID().uuidString
+        message.clientMsgID = IMUtils.generateUUID()
         message.conversationID = conversationID
         message.messageType = .video
         message.status = .sending
