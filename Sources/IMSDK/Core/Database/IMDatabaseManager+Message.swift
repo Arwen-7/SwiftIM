@@ -20,14 +20,18 @@ extension IMDatabaseManager {
         lock.lock()
         defer { lock.unlock() }
         
-        // 检查消息是否已存在
-        let exists = try messageExists(messageID: message.messageID)
+        // ✅ 使用 clientMsgID 作为主键检查消息是否已存在
+        guard !message.clientMsgID.isEmpty else {
+            throw IMError.databaseError("clientMsgID cannot be empty")
+        }
+        
+        let exists = try messageExists(clientMsgID: message.clientMsgID)
         
         let result: IMMessageSaveResult
         
         if exists {
             // 更新现有消息
-            let shouldUpdate = try shouldUpdateMessage(messageID: message.messageID, newMessage: message)
+            let shouldUpdate = try shouldUpdateMessage(clientMsgID: message.clientMsgID, newMessage: message)
             if shouldUpdate {
                 try updateMessage(message)
                 result = .updated
@@ -106,7 +110,7 @@ extension IMDatabaseManager {
     private func insertMessage(_ message: IMMessage) throws {
         let sql = """
             INSERT INTO messages (
-                message_id, client_msg_id,
+                client_msg_id, message_id,
                 conversation_id, sender_id, receiver_id, group_id,
                 message_type, content, extra,
                 status, direction, send_time, server_time, seq,
@@ -128,8 +132,9 @@ extension IMDatabaseManager {
         // 绑定参数
         let currentTime = Int64(Date().timeIntervalSince1970 * 1000)
         
-        sqlite3_bind_text(statement, 1, (message.messageID as NSString).utf8String, -1, nil)
-        sqlite3_bind_text(statement, 2, (message.clientMsgID as NSString).utf8String, -1, nil)
+        // ✅ client_msg_id 作为主键，放在第一位
+        sqlite3_bind_text(statement, 1, (message.clientMsgID as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(statement, 2, (message.messageID as NSString).utf8String, -1, nil)
         sqlite3_bind_text(statement, 3, (message.conversationID as NSString).utf8String, -1, nil)
         sqlite3_bind_text(statement, 4, (message.senderID as NSString).utf8String, -1, nil)
         sqlite3_bind_text(statement, 5, (message.receiverID as NSString).utf8String, -1, nil)
@@ -159,13 +164,13 @@ extension IMDatabaseManager {
     private func updateMessage(_ message: IMMessage) throws {
         let sql = """
             UPDATE messages SET
-                client_msg_id = ?,
+                message_id = ?,
                 content = ?, extra = ?,
                 status = ?, server_time = ?, seq = ?,
                 is_read = ?, is_deleted = ?, is_revoked = ?,
                 revoked_by = ?, revoked_time = ?,
                 update_time = ?
-            WHERE message_id = ?;
+            WHERE client_msg_id = ?;
             """
         
         var statement: OpaquePointer?
@@ -180,7 +185,8 @@ extension IMDatabaseManager {
         
         let currentTime = Int64(Date().timeIntervalSince1970 * 1000)
         
-        sqlite3_bind_text(statement, 1, (message.clientMsgID as NSString).utf8String, -1, nil)
+        // ✅ 更新 message_id（服务端 ID）
+        sqlite3_bind_text(statement, 1, (message.messageID as NSString).utf8String, -1, nil)
         sqlite3_bind_text(statement, 2, (message.content as NSString).utf8String, -1, nil)
         sqlite3_bind_text(statement, 3, (message.extra as NSString).utf8String, -1, nil)
         sqlite3_bind_int(statement, 4, Int32(message.status.rawValue))
@@ -192,7 +198,8 @@ extension IMDatabaseManager {
         sqlite3_bind_text(statement, 10, message.revokedBy.isEmpty ? nil : (message.revokedBy as NSString).utf8String, -1, nil)
         sqlite3_bind_int64(statement, 11, message.revokedTime)
         sqlite3_bind_int64(statement, 12, currentTime)
-        sqlite3_bind_text(statement, 13, (message.messageID as NSString).utf8String, -1, nil)
+        // ✅ 使用 client_msg_id 作为 WHERE 条件（主键）
+        sqlite3_bind_text(statement, 13, (message.clientMsgID as NSString).utf8String, -1, nil)
         
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw IMError.databaseError("Failed to update message: \(getErrorMessage())")
@@ -201,8 +208,44 @@ extension IMDatabaseManager {
     
     // MARK: - Query
     
-    /// 获取单条消息
-    /// - Parameter messageID: 消息 ID
+    /// 获取单条消息（通过 client_msg_id，主键查询）
+    /// - Parameter clientMsgID: 客户端消息 ID
+    /// - Returns: 消息对象
+    public func getMessage(clientMsgID: String) -> IMMessage? {
+        let startTime = Date()
+        
+        lock.lock()
+        defer { lock.unlock() }
+        
+        let sql = "SELECT * FROM messages WHERE client_msg_id = ? LIMIT 1;"
+        
+        var statement: OpaquePointer?
+        
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            IMLogger.shared.error("Failed to prepare query: \(getErrorMessage())")
+            return nil
+        }
+        
+        defer {
+            sqlite3_finalize(statement)
+        }
+        
+        sqlite3_bind_text(statement, 1, (clientMsgID as NSString).utf8String, -1, nil)
+        
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            return nil
+        }
+        
+        let message = parseMessage(from: statement)
+        
+        let elapsed = Date().timeIntervalSince(startTime)
+        IMLogger.shared.database("Get message by clientMsgID", elapsed: elapsed)
+        
+        return message
+    }
+    
+    /// 获取单条消息（通过 message_id，索引查询）
+    /// - Parameter messageID: 服务端消息 ID
     /// - Returns: 消息对象
     public func getMessage(messageID: String) -> IMMessage? {
         let startTime = Date()
@@ -232,7 +275,7 @@ extension IMDatabaseManager {
         let message = parseMessage(from: statement)
         
         let elapsed = Date().timeIntervalSince(startTime)
-        IMLogger.shared.database("Get message", elapsed: elapsed)
+        IMLogger.shared.database("Get message by messageID", elapsed: elapsed)
         
         return message
     }
@@ -340,9 +383,9 @@ extension IMDatabaseManager {
     
     // MARK: - Helper Methods
     
-    /// 检查消息是否存在
-    private func messageExists(messageID: String) throws -> Bool {
-        let sql = "SELECT 1 FROM messages WHERE message_id = ? LIMIT 1;"
+    /// 检查消息是否存在（使用 client_msg_id 作为主键）
+    private func messageExists(clientMsgID: String) throws -> Bool {
+        let sql = "SELECT 1 FROM messages WHERE client_msg_id = ? LIMIT 1;"
         
         var statement: OpaquePointer?
         
@@ -354,14 +397,14 @@ extension IMDatabaseManager {
             sqlite3_finalize(statement)
         }
         
-        sqlite3_bind_text(statement, 1, (messageID as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(statement, 1, (clientMsgID as NSString).utf8String, -1, nil)
         
         return sqlite3_step(statement) == SQLITE_ROW
     }
     
-    /// 判断是否应该更新消息
-    private func shouldUpdateMessage(messageID: String, newMessage: IMMessage) throws -> Bool {
-        guard let existing = getMessage(messageID: messageID) else {
+    /// 判断是否应该更新消息（使用 client_msg_id 作为主键）
+    private func shouldUpdateMessage(clientMsgID: String, newMessage: IMMessage) throws -> Bool {
+        guard let existing = getMessage(clientMsgID: clientMsgID) else {
             return false
         }
         
@@ -403,14 +446,16 @@ extension IMDatabaseManager {
         return false
     }
     
-    /// 解析消息
+    /// 解析消息（✅ 字段顺序：client_msg_id (0), message_id (1), ...）
     private func parseMessage(from statement: OpaquePointer?) -> IMMessage {
         let message = IMMessage()
         
-        message.messageID = String(cString: sqlite3_column_text(statement, 0))
+        // ✅ client_msg_id 是主键，在第一位
+        message.clientMsgID = String(cString: sqlite3_column_text(statement, 0))
         
-        if let clientMsgID = sqlite3_column_text(statement, 1) {
-            message.clientMsgID = String(cString: clientMsgID)
+        // ✅ message_id 在第二位
+        if let messageID = sqlite3_column_text(statement, 1) {
+            message.messageID = String(cString: messageID)
         }
         
         message.conversationID = String(cString: sqlite3_column_text(statement, 2))
@@ -451,15 +496,26 @@ extension IMDatabaseManager {
     
     // MARK: - Delete
     
-    /// 删除消息
-    /// - Parameter messageID: 消息 ID
+    /// 删除消息（通过 client_msg_id，主键删除）
+    /// - Parameter clientMsgID: 客户端消息 ID
+    public func deleteMessage(clientMsgID: String) throws {
+        let startTime = Date()
+        
+        try execute(sql: "DELETE FROM messages WHERE client_msg_id = '\(clientMsgID)';")
+        
+        let elapsed = Date().timeIntervalSince(startTime)
+        IMLogger.shared.database("Delete message by clientMsgID", elapsed: elapsed)
+    }
+    
+    /// 删除消息（通过 message_id，兼容方法）
+    /// - Parameter messageID: 服务端消息 ID
     public func deleteMessage(messageID: String) throws {
         let startTime = Date()
         
         try execute(sql: "DELETE FROM messages WHERE message_id = '\(messageID)';")
         
         let elapsed = Date().timeIntervalSince(startTime)
-        IMLogger.shared.database("Delete message", elapsed: elapsed)
+        IMLogger.shared.database("Delete message by messageID", elapsed: elapsed)
     }
     
     /// 清空所有消息
@@ -606,7 +662,28 @@ extension IMDatabaseManager {
         return (try? getHistoryMessages(conversationID: conversationID, beforeTime: startTime, limit: count)) ?? []
     }
     
-    /// 更新消息状态
+    /// 更新消息状态（通过 client_msg_id，主键更新）
+    /// - Parameters:
+    ///   - clientMsgID: 客户端消息 ID
+    ///   - status: 消息状态
+    public func updateMessageStatus(clientMsgID: String, status: IMMessageStatus) throws {
+        let sql = """
+        UPDATE messages 
+        SET status = \(status.rawValue),
+            update_time = \(IMUtils.currentTimeMillis())
+        WHERE client_msg_id = '\(clientMsgID)';
+        """
+        
+        lock.lock()
+        defer { lock.unlock() }
+        
+        try execute(sql: sql)
+    }
+    
+    /// 更新消息状态（通过 message_id，兼容方法）
+    /// - Parameters:
+    ///   - messageID: 服务端消息 ID
+    ///   - status: 消息状态
     public func updateMessageStatus(messageID: String, status: IMMessageStatus) throws {
         let sql = """
         UPDATE messages 

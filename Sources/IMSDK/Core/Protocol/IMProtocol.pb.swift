@@ -555,6 +555,9 @@ struct Im_Protocol_SendMessageResponse: Sendable {
   /// 服务器消息 ID
   var messageID: String = String()
 
+  /// 客户端消息 ID（用于匹配本地消息）
+  var clientMsgID: String = String()
+
   /// 消息序列号
   var seq: Int64 = 0
 
@@ -1311,7 +1314,7 @@ extension Im_Protocol_SendMessageRequest: SwiftProtobuf.Message, SwiftProtobuf._
 
 extension Im_Protocol_SendMessageResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".SendMessageResponse"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}error_code\0\u{3}error_msg\0\u{3}message_id\0\u{1}seq\0\u{3}server_time\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}error_code\0\u{3}error_msg\0\u{3}message_id\0\u{3}client_msg_id\0\u{1}seq\0\u{3}server_time\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1322,8 +1325,9 @@ extension Im_Protocol_SendMessageResponse: SwiftProtobuf.Message, SwiftProtobuf.
       case 1: try { try decoder.decodeSingularEnumField(value: &self.errorCode) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.errorMsg) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.messageID) }()
-      case 4: try { try decoder.decodeSingularInt64Field(value: &self.seq) }()
-      case 5: try { try decoder.decodeSingularInt64Field(value: &self.serverTime) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.clientMsgID) }()
+      case 5: try { try decoder.decodeSingularInt64Field(value: &self.seq) }()
+      case 6: try { try decoder.decodeSingularInt64Field(value: &self.serverTime) }()
       default: break
       }
     }
@@ -1339,11 +1343,14 @@ extension Im_Protocol_SendMessageResponse: SwiftProtobuf.Message, SwiftProtobuf.
     if !self.messageID.isEmpty {
       try visitor.visitSingularStringField(value: self.messageID, fieldNumber: 3)
     }
+    if !self.clientMsgID.isEmpty {
+      try visitor.visitSingularStringField(value: self.clientMsgID, fieldNumber: 4)
+    }
     if self.seq != 0 {
-      try visitor.visitSingularInt64Field(value: self.seq, fieldNumber: 4)
+      try visitor.visitSingularInt64Field(value: self.seq, fieldNumber: 5)
     }
     if self.serverTime != 0 {
-      try visitor.visitSingularInt64Field(value: self.serverTime, fieldNumber: 5)
+      try visitor.visitSingularInt64Field(value: self.serverTime, fieldNumber: 6)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1352,6 +1359,7 @@ extension Im_Protocol_SendMessageResponse: SwiftProtobuf.Message, SwiftProtobuf.
     if lhs.errorCode != rhs.errorCode {return false}
     if lhs.errorMsg != rhs.errorMsg {return false}
     if lhs.messageID != rhs.messageID {return false}
+    if lhs.clientMsgID != rhs.clientMsgID {return false}
     if lhs.seq != rhs.seq {return false}
     if lhs.serverTime != rhs.serverTime {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}

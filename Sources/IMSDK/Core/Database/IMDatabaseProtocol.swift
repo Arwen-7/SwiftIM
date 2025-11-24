@@ -50,6 +50,9 @@ public protocol IMDatabaseProtocol: AnyObject {
     /// 获取消息
     func getMessage(messageID: String) -> IMMessage?
     
+    /// 获取消息
+    func getMessage(clientMsgID: String) -> IMMessage?
+    
     /// 获取会话消息列表
     func getMessages(conversationID: String, limit: Int) -> [IMMessage]
     

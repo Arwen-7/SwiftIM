@@ -67,7 +67,7 @@ public final class IMMessageQueue {
         )
         queue.append(item)
         
-        IMLogger.shared.debug("Message enqueued: \(message.messageID), queue size: \(queue.count)")
+        IMLogger.shared.debug("Message enqueued: clientMsgID=\(message.clientMsgID), queue size: \(queue.count)")
         
         // 尝试发送
         tryProcessQueue()
@@ -76,12 +76,13 @@ public final class IMMessageQueue {
     /// 从队列中移除消息
     ///
     /// **重要：** 这个方法由 `handleMessageAck` 调用，收到服务器 ACK 后才移除
-    public func dequeue(messageID: String) {
+    /// - Parameter clientMsgID: 客户端消息 ID（用于匹配本地消息）
+    public func dequeue(clientMsgID: String) {
         lock.lock()
         defer { lock.unlock() }
         
-        queue.removeAll { $0.message.messageID == messageID }
-        IMLogger.shared.debug("Message dequeued: \(messageID), queue size: \(queue.count)")
+        queue.removeAll { $0.message.clientMsgID == clientMsgID }
+        IMLogger.shared.debug("Message dequeued: clientMsgID=\(clientMsgID), queue size: \(queue.count)")
         
         // 移除后，继续处理队列中的其他消息
         tryProcessQueue()
@@ -119,13 +120,13 @@ public final class IMMessageQueue {
             item.lastSendTime = IMUtils.currentTimeMillis()
             queue[index] = item
             
-            IMLogger.shared.debug("Processing message: \(item.message.messageID), retry: \(item.retryCount)")
+            IMLogger.shared.debug("Processing message: clientMsgID=\(item.message.clientMsgID), retry: \(item.retryCount)")
             
             // 发送消息（同步调用）
             let success = onSendMessage?(item.message) ?? false
             
             // 重新查找消息（可能已被移除）
-            guard let currentIndex = queue.firstIndex(where: { $0.message.messageID == item.message.messageID }) else {
+            guard let currentIndex = queue.firstIndex(where: { $0.message.clientMsgID == item.message.clientMsgID }) else {
                 // 消息已被移除（收到 ACK 了）
                 continue  // 继续处理下一条
             }
@@ -135,7 +136,7 @@ public final class IMMessageQueue {
                 // ⚠️ 注意：不移除！等待服务器 ACK
                 // 消息保持在队列中，isSending=true
                 // 如果超时未收到 ACK，checkTimeout() 会处理重试
-                IMLogger.shared.debug("Message submitted to WebSocket: \(item.message.messageID), waiting for ACK...")
+                IMLogger.shared.debug("Message submitted to WebSocket: clientMsgID=\(item.message.clientMsgID), waiting for ACK...")
                 
                 // 继续循环处理下一条
                 continue
@@ -147,7 +148,7 @@ public final class IMMessageQueue {
                 currentItem.isSending = false  // 重置状态
                 queue[currentIndex] = currentItem
                 
-                IMLogger.shared.warning("Message send failed (network issue): \(item.message.messageID), will retry when network recovers")
+                IMLogger.shared.warning("Message send failed (network issue): clientMsgID=\(item.message.clientMsgID), will retry when network recovers")
                 
                 // 提交失败，停止处理后续消息
                 break
@@ -194,7 +195,7 @@ public final class IMMessageQueue {
             
             if elapsed > ackTimeout {
                 // ⏰ ACK 超时
-                IMLogger.shared.warning("Message ACK timeout: \(item.message.messageID), elapsed: \(elapsed)ms, retry: \(item.retryCount)/\(maxRetryCount)")
+                IMLogger.shared.warning("Message ACK timeout: clientMsgID=\(item.message.clientMsgID), elapsed: \(elapsed)ms, retry: \(item.retryCount)/\(maxRetryCount)")
                 
                 if item.retryCount < maxRetryCount {
                     // 重置状态，允许重新发送
@@ -203,10 +204,10 @@ public final class IMMessageQueue {
                     queue[i] = item
                     hasTimeout = true
                     
-                    IMLogger.shared.info("Will retry message: \(item.message.messageID)")
+                    IMLogger.shared.info("Will retry message: clientMsgID=\(item.message.clientMsgID)")
                 } else {
                     // 达到最大重试次数，标记为失败
-                    IMLogger.shared.error("Message failed after \(maxRetryCount) retries: \(item.message.messageID)")
+                    IMLogger.shared.error("Message failed after \(maxRetryCount) retries: clientMsgID=\(item.message.clientMsgID)")
                     
                     let failedMessage = item.message
                     queue.remove(at: i)

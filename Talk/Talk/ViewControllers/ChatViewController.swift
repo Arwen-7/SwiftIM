@@ -193,9 +193,11 @@ class ChatViewController: UIViewController {
         self.messages = msgs.reversed() // 最新的消息在底部
         self.tableView.reloadData()
         
-        DispatchQueue.main.async { [weak self] in
+        // 使用 performBatchUpdates 确保在布局完成后滚动
+        self.tableView.performBatchUpdates(nil) { [weak self] _ in
             self?.scrollToBottom(animated: false)
         }
+        
     }
     
     private func markMessagesAsRead() {
@@ -247,7 +249,7 @@ class ChatViewController: UIViewController {
     }
     
     private func scrollToBottom(animated: Bool) {
-        guard !messages.isEmpty else { return }
+        guard !messages.isEmpty, tableView.numberOfRows(inSection: 0) > 0 else { return }
         
         let indexPath = IndexPath(row: messages.count - 1, section: 0)
         tableView.scrollToRow(at: indexPath, at: .bottom, animated: animated)

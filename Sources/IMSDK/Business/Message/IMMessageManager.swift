@@ -136,8 +136,7 @@ public final class IMMessageManager {
         conversationType: IMConversationType
     ) -> IMMessage {
         let message = IMMessage()
-        message.messageID = IMUtils.generateMessageID()
-        message.clientMsgID = IMUtils.generateUUID()
+        message.clientMsgID = IMUtils.generateUUID()  // ✅ 客户端生成唯一 ID
         message.conversationType = conversationType
         message.senderID = userID
         message.receiverID = conversationType == .single ? receiverID : ""
@@ -213,13 +212,16 @@ public final class IMMessageManager {
     /// - Throws: 如果保存到数据库失败
     @discardableResult
     public func sendMessage(_ message: IMMessage) throws -> IMMessage {
-        IMLogger.shared.info("Sending message: \(message.messageID)")
+        IMLogger.shared.info("Sending message: clientMsgID=\(message.clientMsgID)")
+        
+        // ✅ messageID 保持为空，等待服务端返回
+        // 数据库保存逻辑会处理 messageID 为空的情况（使用 clientMsgID 作为主键）
         
         // 保存到数据库（可能抛出异常）
         try database.saveMessage(message)
         
-        // 添加到缓存
-        messageCache.set(message, forKey: message.messageID)
+        // 添加到缓存（使用 clientMsgID 作为 key，便于后续通过 clientMsgID 查找）
+        messageCache.set(message, forKey: message.clientMsgID)
         
         // 通知界面更新
         notifyListeners { $0.onMessageReceived(message) }
@@ -358,30 +360,57 @@ public final class IMMessageManager {
     }
     
     /// 处理消息确认
-    public func handleMessageAck(messageID: String, status: IMMessageStatus) {
-        IMLogger.shared.debug("Message ACK: \(messageID), status: \(status)")
+    /// - Parameters:
+    ///   - clientMsgID: 客户端消息 ID（用于匹配本地消息）
+    ///   - serverMessageID: 服务端消息 ID（用于更新本地 messageID）
+    ///   - status: 消息状态
+    public func handleMessageAck(clientMsgID: String, serverMessageID: String, status: IMMessageStatus) {
+        IMLogger.shared.debug("Message ACK: clientMsgID=\(clientMsgID), serverMessageID=\(serverMessageID.isEmpty ? "(empty)" : serverMessageID), status: \(status)")
         
-        // ✅ 关键：收到服务器 ACK 后，才从队列移除
+        // ✅ 关键：收到服务器 ACK 后，才从队列移除（通过 clientMsgID 匹配）
         // 这保证了消息可靠送达：只有服务器确认收到，才认为发送成功
-        messageQueue.dequeue(messageID: messageID)
+        messageQueue.dequeue(clientMsgID: clientMsgID)
         
-        // 更新数据库
-        do {
-            try database.updateMessageStatus(messageID: messageID, status: status)
-        } catch {
-            IMLogger.shared.error("Failed to update message status: \(error)")
-        }
-        
-        // 更新缓存并通知界面
-        if let message = messageCache.get(forKey: messageID) {
+        // 从缓存中查找消息（使用 clientMsgID 作为 key）
+        if let message = messageCache.get(forKey: clientMsgID) {
+            // 更新消息状态和 messageID
             message.status = status
+            if !serverMessageID.isEmpty {
+                message.messageID = serverMessageID  // ✅ 更新为服务端 ID
+            }
+            
+            // ✅ 简化：直接保存消息（主键是 clientMsgID，不会改变）
+            do {
+                try database.saveMessage(message)
+            } catch {
+                IMLogger.shared.error("Failed to update message in database: \(error)")
+            }
+            
+            // 通知界面更新
             notifyListeners { $0.onMessageStatusChanged(message) }
         } else {
-            // 如果缓存中没有，从数据库读取
-            if let message = database.getMessage(messageID: messageID) {
+            // 如果缓存中没有，从数据库读取（使用 clientMsgID 作为主键）
+            if let message = database.getMessage(clientMsgID: clientMsgID) {
+                
                 message.status = status
-                messageCache.set(message, forKey: messageID)
+                if !serverMessageID.isEmpty {
+                    message.messageID = serverMessageID
+                }
+                
+                // ✅ 简化：直接保存消息
+                do {
+                    try database.saveMessage(message)
+                } catch {
+                    IMLogger.shared.error("Failed to update message in database: \(error)")
+                }
+                
+                // 更新缓存
+                messageCache.set(message, forKey: clientMsgID)
+                
+                // 通知界面更新
                 notifyListeners { $0.onMessageStatusChanged(message) }
+            } else {
+                IMLogger.shared.warning("Message not found for ACK: clientMsgID=\(clientMsgID)")
             }
         }
     }

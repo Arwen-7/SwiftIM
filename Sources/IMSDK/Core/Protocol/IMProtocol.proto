@@ -182,8 +182,9 @@ message SendMessageResponse {
     ErrorCode error_code = 1;
     string error_msg = 2;
     string message_id = 3;       // 服务器消息 ID
-    int64 seq = 4;               // 消息序列号
-    int64 server_time = 5;       // 服务器时间
+    string client_msg_id = 4;    // 客户端消息 ID（用于匹配本地消息）
+    int64 seq = 5;               // 消息序列号
+    int64 server_time = 6;       // 服务器时间
 }
 
 // 推送消息

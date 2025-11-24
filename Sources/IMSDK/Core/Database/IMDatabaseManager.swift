@@ -175,11 +175,11 @@ public final class IMDatabaseManager: IMDatabaseProtocol {
     
     /// 创建表
     private func createTables() throws {
-        // 创建消息表
+        // 创建消息表（✅ 使用 client_msg_id 作为主键，参考 OpenIM SDK 设计）
         try execute(sql: """
             CREATE TABLE IF NOT EXISTS messages (
-                message_id TEXT PRIMARY KEY,
-                client_msg_id TEXT,
+                client_msg_id TEXT PRIMARY KEY,
+                message_id TEXT,
                 conversation_id TEXT NOT NULL,
                 sender_id TEXT NOT NULL,
                 receiver_id TEXT,
@@ -204,6 +204,8 @@ public final class IMDatabaseManager: IMDatabaseProtocol {
         
         // 创建索引
         try execute(sql: """
+            CREATE INDEX IF NOT EXISTS idx_messages_message_id 
+                ON messages(message_id);
             CREATE INDEX IF NOT EXISTS idx_messages_conversation 
                 ON messages(conversation_id, send_time DESC);
             CREATE INDEX IF NOT EXISTS idx_messages_seq 
