@@ -217,8 +217,13 @@ public struct IMPacketHeader {
         }
         offset += 2
         
-        guard let command = IMCommandType(rawValue: commandRaw) else {
-            return nil
+        // 解析命令类型，如果无法识别则使用 .unknown
+        let command: IMCommandType
+        if let recognizedCommand = IMCommandType(rawValue: commandRaw) {
+            command = recognizedCommand
+        } else {
+            print("[IMPacket] Unknown command type: \(commandRaw), using .unknown")
+            command = .unknown
         }
         
         // Sequence（4 bytes）
