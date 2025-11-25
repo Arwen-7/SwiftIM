@@ -145,11 +145,18 @@ public final class IMConversationManager {
         if conversation == nil {
             // 会话不存在，创建新会话
             // 对于单聊：targetID 是对话的另一方
-            // - 如果是收到的消息：对方是 senderID
-            // - 如果是发送的消息：对方是 receiverID
+            // - 如果 senderID == currentUserID，对方是 receiverID
+            // - 如果 receiverID == currentUserID（或为空），对方是 senderID
             let targetID: String
             if message.conversationType == .single {
-                targetID = message.direction == .receive ? message.senderID : message.receiverID
+                // 不依赖 direction，直接基于 currentUserID 判断
+                if message.senderID == userID {
+                    // 我发送的消息，对方是 receiverID
+                    targetID = message.receiverID
+                } else {
+                    // 对方发送的消息，对方是 senderID
+                    targetID = message.senderID
+                }
             } else {
                 targetID = message.groupID
             }
@@ -165,7 +172,7 @@ public final class IMConversationManager {
                 conversation?.groupID = targetID
             }
             
-            IMLogger.shared.info("Creating conversation: \(conversationID)")
+            IMLogger.shared.info("Creating conversation: \(conversationID) with targetID: \(targetID)")
         }
         
         guard let conv = conversation else {
@@ -360,10 +367,6 @@ public final class IMConversationManager {
     /// 发送已读回执到服务端
     /// ✅ 优化：只发送会话ID，让服务端批量标记该会话所有未读消息
     private func sendReadReceiptToServer(conversationID: String) {
-        guard let client = IMClient.shared as? IMClient else {
-            IMLogger.shared.warning("IMClient not available, skip sending read receipt")
-            return
-        }
         
         // 创建已读回执请求（messageIds 留空，服务端根据会话ID批量处理）
         var request = Im_Protocol_ReadReceiptRequest()
@@ -374,14 +377,7 @@ public final class IMConversationManager {
             let requestData = try request.serializedData()
             
             // 发送请求（通过 IMClient 的发送方法）
-            client.sendReadReceipt(requestData) { result in
-                switch result {
-                case .success:
-                    IMLogger.shared.debug("✅ Read receipt sent to server (conversation: \(conversationID))")
-                case .failure(let error):
-                    IMLogger.shared.error("❌ Failed to send read receipt: \(error)")
-                }
-            }
+            IMClient.shared.sendReadReceipt(requestData)
         } catch {
             IMLogger.shared.error("Failed to serialize read receipt request: \(error)")
         }

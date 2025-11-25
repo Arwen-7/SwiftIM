@@ -90,7 +90,7 @@ public final class IMMessageManager {
     /// 处理传输层重连事件（由 IMClient 调用）
     internal func handleTransportReconnected() {
         // 通知消息队列重新发送未确认的消息
-        messageQueue.onWebSocketReconnected()
+        messageQueue.onSocketReconnected()
     }
     
     // MARK: - Listener Management

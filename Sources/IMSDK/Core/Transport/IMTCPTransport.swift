@@ -181,18 +181,16 @@ public final class IMTCPTransport: IMTransportProtocol {
                 self.authenticate(token: authToken, completion: completion)
                 
             case .failure(let error):
-                self.lock.lock()
-                self.state = .disconnected
-                self.lock.unlock()
-                
                 // TCP 连接失败
+                // ⚠️ 不要手动设置 state，让 socketManager 的状态变化自动同步（避免双重触发重连）
+                
                 if let completion = completion {
                     // ✅ 首次连接失败，立即通知调用方
                     IMLogger.shared.warning("TCP connection failed (first attempt): \(error)")
                     completion(.failure(.connectionFailed(error)))
-                    // ⚠️ 但仍会触发自动重连（通过 onStateChange）
+                    // ⚠️ 但仍会触发自动重连（通过 socketManager.onStateChange）
                 } else {
-                    // ✅ 重连失败，不调用 completion，由 onStateChange 通知
+                    // ✅ 重连失败，不调用 completion，由 socketManager.onStateChange 触发重连
                     IMLogger.shared.warning("TCP connection failed (reconnect): \(error)")
                 }
             }
@@ -266,12 +264,17 @@ public final class IMTCPTransport: IMTransportProtocol {
         let packet = codec.encode(command: command, sequence: seq, body: body)
         lock.unlock()
         
+        // 📤 发送日志
+        IMLogger.shared.info("📤 Sending packet: command=\(command) (raw=\(command.rawValue)), seq=\(seq), bodyLen=\(body.count)")
+        
         // 发送完整的协议包
         socketManager.send(data: packet) { result in
             switch result {
             case .success:
+                IMLogger.shared.debug("✅ Packet sent successfully: seq=\(seq)")
                 completion?(.success(()))
             case .failure(let error):
+                IMLogger.shared.error("❌ Failed to send packet: seq=\(seq), error=\(error)")
                 completion?(.failure(.sendFailed(error)))
             }
         }
@@ -291,12 +294,18 @@ public final class IMTCPTransport: IMTransportProtocol {
     /// 发送认证请求
     /// - Parameter completion: 认证结果回调（重连时传 nil）
     private func authenticate(token: String, completion: ((Result<Void, IMTransportError>) -> Void)?) {
-        // TODO: 使用 Protobuf 序列化认证请求
-        // 这里先用简化版本
+        // 使用 Protobuf 序列化认证请求
+        var authRequest = Im_Protocol_AuthRequest()
+        authRequest.userID = currentUserID ?? ""
+        authRequest.token = token
+        authRequest.platform = "iOS"
         
-        let authData = """
-        {"type":"auth","token":"\(token)","platform":"iOS"}
-        """.data(using: .utf8)!
+        guard let authData = try? authRequest.serializedData() else {
+            IMLogger.shared.error("Failed to serialize auth request")
+            let error = NSError(domain: "IMTCPTransport", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to serialize auth request"])
+            completion?(.failure(.connectionFailed(error)))
+            return
+        }
         
         let seq = sequenceGenerator.next()
         let packet = codec.encode(command: .authReq, sequence: seq, body: authData)
@@ -307,7 +316,33 @@ public final class IMTCPTransport: IMTransportProtocol {
             guard let self = self else { return }
             
             switch result {
-            case .success:
+            case .success(let data):
+                // 解析认证响应
+                guard let authResponse = try? Im_Protocol_AuthResponse(serializedData: data) else {
+                    IMLogger.shared.error("Failed to parse auth response")
+                    
+                    // 断开连接
+                    self.socketManager.disconnect()
+                    
+                    completion?(.failure(.protocolError("Invalid auth response")))
+                    return
+                }
+                
+                // 检查错误码
+                if authResponse.errorCode != .errSuccess {
+                    IMLogger.shared.error("Auth failed with error: \(authResponse.errorMsg)")
+                    
+                    // 断开连接
+                    self.socketManager.disconnect()
+                    
+                    if let completion = completion {
+                        completion(.failure(.protocolError("Authentication failed: \(authResponse.errorMsg)")))
+                    } else {
+                        IMLogger.shared.warning("Authentication failed (reconnect): \(authResponse.errorMsg)")
+                    }
+                    return
+                }
+                
                 // 认证成功，重置序列号（新会话从 1 开始）
                 self.sequenceGenerator.reset()
                 
@@ -322,29 +357,29 @@ public final class IMTCPTransport: IMTransportProtocol {
                 
                 // 判断是首次连接还是重连
                 if let completion = completion {
-                    // ✅ 首次连接成功，调用 completion
-                    IMLogger.shared.info("✅ Connected successfully")
+                    // 首次连接成功，调用 completion
                     completion(.success(()))
                 } else {
-                    // ✅ 重连成功，重置重连计数，通过 onStateChange 通知
-                    IMLogger.shared.info("✅ Reconnected successfully")
+                    // 重连成功，重置重连计数，通过 onStateChange 通知
                     self.reconnectManager?.resetAttempts()
                 }
                 
             case .failure(let error):
-                self.lock.lock()
-                self.state = .disconnected
-                self.lock.unlock()
+                // 认证失败，需要断开 socket 连接
+                // 断开后会触发 socketManager.onStateChange(.disconnected)
+                // 如果 autoReconnectEnabled = true，会自动触发重连
+                self.socketManager.disconnect()
                 
-                // 认证失败
+                // 认证失败通知
                 if let completion = completion {
                     // ✅ 首次连接认证失败，立即通知调用方
                     IMLogger.shared.warning("Authentication failed (first attempt): \(error)")
                     completion(.failure(error))
-                    // ⚠️ 但仍会触发自动重连（通过 onStateChange）
+                    // ⚠️ 如果开启了自动重连，会通过 socketManager.onStateChange 触发
                 } else {
-                    // ✅ 重连认证失败，不调用 completion，由 onStateChange 通知
+                    // ✅ 重连认证失败，不调用 completion
                     IMLogger.shared.warning("Authentication failed (reconnect): \(error)")
+                    // 会通过 socketManager.onStateChange 触发下一次重连
                 }
             }
         }
@@ -397,11 +432,8 @@ public final class IMTCPTransport: IMTransportProtocol {
         
         IMLogger.shared.warning("⚠️ Fatal error detected: \(error), will reconnect...")
         
-        // 快速失败：立即断开
-        disconnect()
-        
-        // 使用 ReconnectManager 触发重连（内置指数退避 + 最大次数限制）
-        reconnectManager?.triggerReconnect()
+        // 快速失败：断开 socket（会触发 socketManager.onStateChange，从而自动重连）
+        socketManager.disconnect()
     }
     
     // MARK: - Socket Callbacks
@@ -481,6 +513,7 @@ public final class IMTCPTransport: IMTransportProtocol {
     
     /// 处理接收到的数据
     private func handleReceivedData(_ data: Data) {
+
         do {
             // 解码数据包（处理粘包/拆包）
             let packets = try codec.decode(data: data)
@@ -490,6 +523,7 @@ public final class IMTCPTransport: IMTransportProtocol {
             }
             
         } catch {
+            IMLogger.shared.error("❌ Packet decode error: \(error)")
             onError?(.protocolError("数据包解码失败：\(error.localizedDescription)"))
         }
     }
@@ -500,11 +534,15 @@ public final class IMTCPTransport: IMTransportProtocol {
         let sequence = packet.header.sequence
         let body = packet.body
         
+        // 📊 统一日志：所有收到的包
+        IMLogger.shared.info("📦 Received packet: command=\(command) (raw=\(command.rawValue)), seq=\(sequence), bodyLen=\(body.count)")
+        
         // 检查是否是响应包（匹配待确认的请求）
         lock.lock()
         if let callback = pendingRequests.removeValue(forKey: sequence) {
             lock.unlock()
             
+            IMLogger.shared.info("Matched pending request for seq=\(sequence), calling callback")
             // 这是响应包（服务器回显客户端的 sequence）
             callback(.success(body))
             return
@@ -519,6 +557,7 @@ public final class IMTCPTransport: IMTransportProtocol {
         switch command {
         case .heartbeatRsp:
             // 心跳响应
+            IMLogger.shared.info("🫀 Heartbeat response received (seq: \(sequence))")
             heartbeatManager?.handleHeartbeatResponse()
             
         case .kickOut:
@@ -527,7 +566,7 @@ public final class IMTCPTransport: IMTransportProtocol {
             onError?(.protocolError("被踢出：其他设备登录"))
             
         default:
-            // 其他推送消息
+            // 其他推送消息或响应
             onReceive?(command, sequence, body)
         }
     }
@@ -536,7 +575,16 @@ public final class IMTCPTransport: IMTransportProtocol {
     
     /// 启动心跳
     private func startHeartbeat() {
-        guard config.heartbeatInterval > 0 else { return }
+        guard config.heartbeatInterval > 0 else {
+            IMLogger.shared.debug("Heartbeat disabled (interval = 0)")
+            return
+        }
+        
+        // 先停止旧的心跳管理器
+        heartbeatManager?.stop()
+        heartbeatManager = nil
+        
+        IMLogger.shared.info("🫀 Starting heartbeat (interval: \(config.heartbeatInterval)s, timeout: \(config.heartbeatTimeout)s)")
         
         heartbeatManager = HeartbeatManager(
             interval: config.heartbeatInterval,
@@ -557,22 +605,30 @@ public final class IMTCPTransport: IMTransportProtocol {
     
     /// 发送心跳包
     private func sendHeartbeat() {
-        let heartbeatData = """
-        {"type":"ping","time":\(IMUtils.currentTimeMillis())}
-        """.data(using: .utf8)!
+        // 心跳包通常不需要包体，发送空数据即可
+        let heartbeatData = Data()
         
         let seq = sequenceGenerator.next()
         let packet = codec.encode(command: .heartbeatReq, sequence: seq, body: heartbeatData)
         
-        socketManager.send(data: packet, completion: nil)
+        IMLogger.shared.info("🫀 Sending heartbeat (seq: \(seq))")
+        
+        socketManager.send(data: packet) { result in
+            switch result {
+            case .success:
+                IMLogger.shared.info("🫀 Heartbeat sent successfully")
+            case .failure(let error):
+                IMLogger.shared.warning("🫀 Heartbeat send failed: \(error)")
+            }
+        }
     }
     
     /// 心跳超时处理
     private func handleHeartbeatTimeout() {
-        print("[IMTCPTransport] 心跳超时，尝试重连...")
+        IMLogger.shared.warning("🫀 Heartbeat timeout, will reconnect...")
         
-        // 触发重连
-        reconnectManager?.triggerReconnect()
+        // 断开连接（会自动触发重连）
+        socketManager.disconnect()
     }
     
     // MARK: - Reconnect Management
@@ -640,8 +696,9 @@ public final class IMTCPTransport: IMTransportProtocol {
 private final class HeartbeatManager {
     private let interval: TimeInterval
     private let timeout: TimeInterval
-    private var timer: Timer?
-    private var timeoutTimer: Timer?
+    private let queue = DispatchQueue(label: "com.imsdk.heartbeat", qos: .utility)
+    private var heartbeatTimer: DispatchSourceTimer?
+    private var timeoutTimer: DispatchSourceTimer?
     
     var onSendHeartbeat: (() -> Void)?
     var onTimeout: (() -> Void)?
@@ -654,18 +711,26 @@ private final class HeartbeatManager {
     func start() {
         stop()
         
-        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+        // 立即发送第一次心跳
+        sendHeartbeat()
+        
+        // 使用 DispatchSourceTimer 代替 Timer（不依赖 RunLoop）
+        // 设置为 interval 秒后第一次触发，然后每 interval 秒重复
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + interval, repeating: interval)
+        timer.setEventHandler { [weak self] in
             self?.sendHeartbeat()
         }
+        timer.resume()
         
-        // 立即发送一次心跳
-        sendHeartbeat()
+        heartbeatTimer = timer
     }
     
     func stop() {
-        timer?.invalidate()
-        timer = nil
-        timeoutTimer?.invalidate()
+        // 同步停止，确保立即生效
+        heartbeatTimer?.cancel()
+        heartbeatTimer = nil
+        timeoutTimer?.cancel()
         timeoutTimer = nil
     }
     
@@ -673,15 +738,21 @@ private final class HeartbeatManager {
         onSendHeartbeat?()
         
         // 启动超时定时器
-        timeoutTimer?.invalidate()
-        timeoutTimer = Timer.scheduledTimer(withTimeInterval: timeout, repeats: false) { [weak self] _ in
+        timeoutTimer?.cancel()
+        
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + timeout)
+        timer.setEventHandler { [weak self] in
             self?.onTimeout?()
         }
+        timer.resume()
+        
+        timeoutTimer = timer
     }
     
     func handleHeartbeatResponse() {
         // 收到心跳响应，取消超时定时器
-        timeoutTimer?.invalidate()
+        timeoutTimer?.cancel()
         timeoutTimer = nil
     }
 }
@@ -704,6 +775,12 @@ private final class ReconnectManager {
     }
     
     func triggerReconnect() {
+        // ✅ 防止重复触发：如果已经有 timer 在等待，直接返回
+        if timer != nil && timer!.isValid {
+            IMLogger.shared.debug("[ReconnectManager] Reconnect already scheduled, ignoring duplicate trigger")
+            return
+        }
+        
         guard maxAttempts == 0 || currentAttempt < maxAttempts else {
             IMLogger.shared.error("[ReconnectManager] Max reconnect attempts reached (\(maxAttempts))")
             onMaxAttemptsReached?()  // ✅ 触发回调

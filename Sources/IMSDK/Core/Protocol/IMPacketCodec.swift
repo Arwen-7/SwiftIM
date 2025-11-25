@@ -223,6 +223,15 @@ public class IMPacketCodec {
             
             // 3.2 解析包头（包含魔数、版本、CRC 校验）
             let headerData = receiveBuffer.prefix(kPacketHeaderSize)
+            
+            // 额外的安全检查：确保 headerData 确实有 16 字节
+            guard headerData.count == kPacketHeaderSize else {
+                IMLogger.shared.error("Header data size mismatch: \(headerData.count) != \(kPacketHeaderSize)")
+                stats.decodeErrors += 1
+                onFatalError?(.invalidPacketHeader)
+                throw IMPacketCodecError.invalidPacketHeader
+            }
+            
             guard let header = IMPacketHeader.decode(from: headerData) else {
                 // 包头解析失败（魔数不匹配、版本不对、CRC 校验失败）
                 handleHeaderDecodeFailure(headerData)

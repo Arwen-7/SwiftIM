@@ -185,36 +185,38 @@ public struct IMPacketHeader {
     
     /// 从二进制数据反序列化
     public static func decode(from data: Data) -> IMPacketHeader? {
+        // 严格检查数据长度
         guard data.count >= kPacketHeaderSize else {
+            print("[IMPacket] Data too short: \(data.count) < \(kPacketHeaderSize)")
             return nil
         }
         
+        // 转换为字节数组，避免 Data 下标访问的潜在问题
+        let bytes = [UInt8](data)
         var offset = 0
         
         // Magic（2 bytes）
-        let magic = data.withUnsafeBytes { ptr in
-            UInt16(bigEndian: ptr.load(fromByteOffset: offset, as: UInt16.self))
-        }
+        let magic = UInt16(bytes[offset]) << 8 | UInt16(bytes[offset + 1])
         guard magic == kProtocolMagic else {
+            print("[IMPacket] Invalid magic: 0x\(String(format: "%04X", magic))")
             return nil  // 魔数不匹配
         }
         offset += 2
         
         // Version（1 byte）
-        let version = data[offset]
+        let version = bytes[offset]
         guard version == kProtocolVersion else {
+            print("[IMPacket] Invalid version: \(version)")
             return nil  // 版本不匹配
         }
         offset += 1
         
         // Flags（1 byte）
-        let flags = data[offset]
+        let flags = bytes[offset]
         offset += 1
         
         // Command（2 bytes）
-        let commandRaw = data.withUnsafeBytes { ptr in
-            UInt16(bigEndian: ptr.load(fromByteOffset: offset, as: UInt16.self))
-        }
+        let commandRaw = UInt16(bytes[offset]) << 8 | UInt16(bytes[offset + 1])
         offset += 2
         
         // 解析命令类型，如果无法识别则使用 .unknown
@@ -227,21 +229,21 @@ public struct IMPacketHeader {
         }
         
         // Sequence（4 bytes）
-        let sequence = data.withUnsafeBytes { ptr in
-            UInt32(bigEndian: ptr.load(fromByteOffset: offset, as: UInt32.self))
-        }
+        let sequence = UInt32(bytes[offset]) << 24 | 
+                      UInt32(bytes[offset + 1]) << 16 | 
+                      UInt32(bytes[offset + 2]) << 8 | 
+                      UInt32(bytes[offset + 3])
         offset += 4
         
         // BodyLength（4 bytes）
-        let bodyLength = data.withUnsafeBytes { ptr in
-            UInt32(bigEndian: ptr.load(fromByteOffset: offset, as: UInt32.self))
-        }
+        let bodyLength = UInt32(bytes[offset]) << 24 | 
+                        UInt32(bytes[offset + 1]) << 16 | 
+                        UInt32(bytes[offset + 2]) << 8 | 
+                        UInt32(bytes[offset + 3])
         offset += 4
         
         // CRC16（2 bytes）
-        let crc16 = data.withUnsafeBytes { ptr in
-            UInt16(bigEndian: ptr.load(fromByteOffset: offset, as: UInt16.self))
-        }
+        let crc16 = UInt16(bytes[offset]) << 8 | UInt16(bytes[offset + 1])
         
         // 创建包头（会自动计算 CRC）
         let header = IMPacketHeader(
@@ -302,11 +304,19 @@ public struct IMPacket {
     /// - Returns: 解析出的包，如果数据不完整或格式错误则返回 nil
     public static func decode(from data: Data) -> IMPacket? {
         guard data.count >= kPacketHeaderSize else {
+            print("[IMPacket] Data too short for packet: \(data.count) < \(kPacketHeaderSize)")
             return nil
         }
         
         // 1. 解析包头
         let headerData = data.prefix(kPacketHeaderSize)
+        
+        // 额外的安全检查
+        guard headerData.count == kPacketHeaderSize else {
+            print("[IMPacket] Header data size mismatch: \(headerData.count) != \(kPacketHeaderSize)")
+            return nil
+        }
+        
         guard let header = IMPacketHeader.decode(from: headerData) else {
             return nil
         }

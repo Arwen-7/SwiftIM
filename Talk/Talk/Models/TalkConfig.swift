@@ -10,7 +10,9 @@ import Foundation
 /// Talk 应用配置
 struct TalkConfig {
     /// IM 服务器地址（根据你的服务器地址修改）
-    static let imServerURL = "ws://localhost:8081/ws"
+    /// 使用 TCP 协议（推荐，性能更好）：tcp://host:8082
+    /// 使用 WebSocket 协议（兼容）：ws://host:8081/ws
+    static let imServerURL = "tcp://localhost:8082"
     
     /// API 服务器地址
     static let apiServerURL = "http://localhost:8080"

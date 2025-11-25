@@ -230,11 +230,11 @@ public final class IMMessageQueue {
     }
     
     /// WebSocket 重连后调用，重新发送队列中的消息
-    public func onWebSocketReconnected() {
+    public func onSocketReconnected() {
         lock.lock()
         defer { lock.unlock() }
         
-        IMLogger.shared.info("WebSocket reconnected, resending messages in queue...")
+        IMLogger.shared.info("Socket reconnected, resending messages in queue...")
         
         // 重置所有消息的 isSending 状态
         for i in 0..<queue.count {

@@ -65,12 +65,18 @@ Talk/
 ```swift
 struct TalkConfig {
     /// IM 服务器地址
-    static let imServerURL = "ws://your-server:8080/ws"
+    /// 使用 TCP 协议（推荐，性能更好）：tcp://your-server:8082
+    /// 使用 WebSocket 协议（兼容）：ws://your-server:8081/ws
+    static let imServerURL = "tcp://your-server:8082"
     
     /// API 服务器地址
     static let apiServerURL = "http://your-server:8080"
 }
 ```
+
+**注意**：
+- 默认使用 TCP 协议，端口 8082，性能更好
+- 如需使用 WebSocket，将 URL 改为 `ws://your-server:8081/ws`
 
 ### 3. 启动 IM 服务器
 
@@ -159,8 +165,12 @@ private func initializeSDK() {
 ```swift
 IMClient.shared.login(userID: userID, token: token) { result in
     switch result {
-    case .success(let user):
-        print("登录成功: \(user.nickname)")
+    case .success:
+        print("登录成功，长连接已建立")
+        // 获取当前用户信息
+        if let user = IMClient.shared.currentUser {
+            print("用户昵称: \(user.nickname)")
+        }
     case .failure(let error):
         print("登录失败: \(error)")
     }

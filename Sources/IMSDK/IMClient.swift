@@ -34,7 +34,7 @@ public struct IMConfig {
         logConfig: IMLoggerConfig = IMLoggerConfig(),
         databaseConfig: IMDatabaseConfig = IMDatabaseConfig(),
         timeout: TimeInterval = 30,
-        transportType: IMTransportType = .webSocket,
+        transportType: IMTransportType = .tcp,  // 默认使用 TCP 传输协议
         enableSmartSwitch: Bool = false,
         transportConfig: IMTransportConfig? = nil
     ) {
@@ -124,6 +124,11 @@ public final class IMClient {
     public private(set) var groupManager: IMGroupManager!
     public private(set) var friendManager: IMFriendManager!
     public private(set) var typingManager: IMTypingManager!
+    
+    // 当前用户信息（登录后可用）
+    public var currentUser: IMUser? {
+        return userManager?.getCurrentUser()
+    }
     
     // 监听器
     private var connectionListeners: NSHashTable<AnyObject> = NSHashTable.weakObjects()
@@ -286,9 +291,19 @@ public final class IMClient {
             IMLogger.shared.debug("Heartbeat received, server time: \(response.serverTime)")
         }
         
+        // 注册撤回消息响应
+        messageRouter.register(command: .revokeMsgRsp, type: Im_Protocol_RevokeMessageResponse.self) { [weak self] response, seq in
+            self?.handleTCPRevokeMessageResponse(response, sequence: seq)
+        }
+        
         // 注册撤回消息推送
         messageRouter.register(command: .revokeMsgPush, type: Im_Protocol_RevokeMessagePush.self) { [weak self] push, seq in
             self?.handleTCPRevokeMessagePush(push)
+        }
+        
+        // 注册已读回执响应
+        messageRouter.register(command: .readReceiptRsp, type: Im_Protocol_ReadReceiptResponse.self) { [weak self] response, seq in
+            self?.handleTCPReadReceiptResponse(response, sequence: seq)
         }
         
         // 注册已读回执推送
@@ -347,11 +362,11 @@ public final class IMClient {
     /// - Parameters:
     ///   - userID: 用户 ID
     ///   - token: 认证 Token
-    ///   - completion: 完成回调
+    ///   - completion: 完成回调（长连接建立成功时调用）
     public func login(
         userID: String,
         token: String,
-        completion: @escaping (Result<IMUser, IMError>) -> Void
+        completion: @escaping (Result<Void, IMError>) -> Void
     ) {
         guard config != nil else {
             completion(.failure(.notInitialized))
@@ -530,20 +545,18 @@ public final class IMClient {
         // 设置认证 Header
         httpManager.addHeader(name: "Authorization", value: "Bearer \(token)")
         
-        // 获取用户信息
+        // 连接 Socket（等待连接成功后调用 completion）
+        connectTransport(completion: completion)
+        
+        // 获取用户信息（静默执行，不影响登录结果）
         userManager.getUserInfo(userID: userID, forceUpdate: true) { [weak self] result in
             switch result {
             case .success(let user):
                 self?.userManager.setCurrentUser(user)
-                
-                // 连接 Socket
-                self?.connectTransport()
-                
-                completion(.success(user))
+                IMLogger.shared.info("User info loaded: \(user.userID)")
                 
             case .failure(let error):
-                IMLogger.shared.error("Failed to get user info: \(error)")
-                completion(.failure(error))
+                IMLogger.shared.warning("Failed to load user info (non-critical): \(error)")
             }
         }
     }
@@ -576,36 +589,40 @@ public final class IMClient {
     // MARK: - Connection
     
     /// 连接传输层
-    private func connectTransport() {
-        guard let userID = currentUserID, let token = currentToken, let imURL = config?.imURL else { return }
+    /// - Parameter completion: 连接成功或失败的回调（可选，自动重连时不需要）
+    private func connectTransport(completion: ((Result<Void, IMError>) -> Void)? = nil) {
+        guard let userID = currentUserID, let token = currentToken, let imURL = config?.imURL else {
+            completion?(.failure(.notInitialized))
+            return
+        }
         
         // ✅ 防止重复连接：如果已经在连接中或已连接，直接返回
         if connectionState == .connecting || connectionState == .connected {
             IMLogger.shared.info("Already connecting or connected, skip duplicate connection attempt")
+            completion?(.failure(.invalidParameter("Already connecting or connected")))
             return
         }
         
         updateConnectionState(.connecting)
         
+        // 转换回调：IMTransportError -> IMError
+        let wrappedCompletion: (Result<Void, IMTransportError>) -> Void = { result in
+            switch result {
+            case .success:
+                completion?(.success(()))
+            case .failure(let error):
+                IMLogger.shared.error("❌ Transport connection failed: \(error)")
+                // 将 IMTransportError 转换为 IMError
+                let imError: IMError = .networkError(error.localizedDescription)
+                completion?(.failure(imError))
+            }
+        }
+        
         // 使用协议切换器或单一传输层
         if let switcher = transportSwitcher {
-            switcher.connect(url: imURL, userID: userID, token: token) { [weak self] result in
-                switch result {
-                case .success:
-                    IMLogger.shared.info("✅ Transport connected")
-                case .failure(let error):
-                    IMLogger.shared.error("❌ Transport connection failed: \(error)")
-                }
-            }
+            switcher.connect(url: imURL, userID: userID, token: token, completion: wrappedCompletion)
         } else if let transport = transport {
-            transport.connect(url: imURL, userID: userID, token: token) { [weak self] result in
-                switch result {
-                case .success:
-                    IMLogger.shared.info("✅ Transport connected")
-                case .failure(let error):
-                    IMLogger.shared.error("❌ Transport connection failed: \(error)")
-                }
-            }
+            transport.connect(url: imURL, userID: userID, token: token, completion: wrappedCompletion)
         }
     }
     
@@ -908,9 +925,8 @@ public final class IMClient {
     /// - Parameters:
     ///   - requestData: 已读回执请求数据（Protobuf 序列化后的数据）
     ///   - completion: 完成回调
-    internal func sendReadReceipt(_ requestData: Data, completion: @escaping (Result<Void, Error>) -> Void) {
+    internal func sendReadReceipt(_ requestData: Data) {
         guard isConnected else {
-            completion(.failure(IMError.notConnected))
             return
         }
         
@@ -919,22 +935,20 @@ public final class IMClient {
             switcher.sendMessage(body: requestData, command: .readReceiptReq) { result in
                 switch result {
                 case .success:
-                    completion(.success(()))
+                    break
                 case .failure(let error):
-                    completion(.failure(error))
+                    IMLogger.shared.error("❌ Failed to send read receipt: \(error)")
                 }
             }
         } else if let transport = transport {
             transport.sendMessage(body: requestData, command: .readReceiptReq) { result in
                 switch result {
                 case .success:
-                    completion(.success(()))
+                    break
                 case .failure(let error):
-                    completion(.failure(error))
+                    IMLogger.shared.error("❌ Failed to send read receipt: \(error)")
                 }
             }
-        } else {
-            completion(.failure(IMError.notConnected))
         }
     }
     
@@ -981,7 +995,7 @@ public final class IMClient {
     
     /// 处理传输层连接成功
     private func handleTransportConnected() {
-        IMLogger.shared.info("Transport connected")
+        IMLogger.shared.info("✅ Transport connected successfully")
         
         updateConnectionState(.connected)
         
@@ -1196,7 +1210,7 @@ public final class IMClient {
             let readReceiptRsp = try Im_Protocol_ReadReceiptResponse(serializedData: body)
             
             if readReceiptRsp.errorCode == .errSuccess {
-                IMLogger.shared.debug("✅ Read receipt sent successfully (seq=\(sequence))")
+                IMLogger.shared.info("✅ Read receipt sent successfully (seq=\(sequence))")
             } else {
                 IMLogger.shared.error("❌ Read receipt failed: \(readReceiptRsp.errorMsg)")
             }
@@ -1523,9 +1537,9 @@ extension IMClient: IMNetworkMonitorDelegate {
             listener.onNetworkConnected()
         }
         
-        // 如果 WebSocket 断开，自动重连
+        // 如果 Socket 断开，自动重连
         if connectionState == .disconnected, isLoggedIn {
-            IMLogger.shared.info("Auto reconnecting WebSocket due to network recovery...")
+            IMLogger.shared.info("Auto reconnecting Socket due to network recovery...")
             connectTransport()
         }
     }
@@ -1558,14 +1572,14 @@ extension IMClient: IMNetworkMonitorDelegate {
     /// 处理 TCP 发送消息响应
     private func handleTCPSendMessageResponse(_ response: Im_Protocol_SendMessageResponse, sequence: UInt32) {
         if response.errorCode == .errSuccess {
-            IMLogger.shared.debug("Message sent successfully: clientMsgID=\(response.clientMsgID) -> serverID=\(response.serverMsgID)")
+            IMLogger.shared.info("✅ Message sent successfully: clientMsgID=\(response.clientMsgID) -> serverID=\(response.serverMsgID)")
             messageManager?.handleMessageAck(
                 clientMsgID: response.clientMsgID,
                 serverMessageID: response.serverMsgID,
                 status: .sent
             )
         } else {
-            IMLogger.shared.error("Message send failed: clientMsgID=\(response.clientMsgID), error: \(response.errorMsg)")
+            IMLogger.shared.error("❌ Message send failed: clientMsgID=\(response.clientMsgID), error: \(response.errorMsg)")
             messageManager?.handleMessageAck(
                 clientMsgID: response.clientMsgID,
                 serverMessageID: response.serverMsgID,  // ✅ 直接使用 serverMsgID，即使为空也不要紧
@@ -1630,6 +1644,24 @@ extension IMClient: IMNetworkMonitorDelegate {
             } catch {
                 IMLogger.shared.error("Failed to update TCP read receipt: \(error)")
             }
+        }
+    }
+    
+    /// 处理 TCP 已读回执响应
+    private func handleTCPReadReceiptResponse(_ response: Im_Protocol_ReadReceiptResponse, sequence: UInt32) {
+        if response.errorCode == .errSuccess {
+            IMLogger.shared.info("✅ Read receipt sent successfully (seq=\(sequence))")
+        } else {
+            IMLogger.shared.error("❌ Read receipt failed: \(response.errorMsg)")
+        }
+    }
+    
+    /// 处理 TCP 撤回消息响应
+    private func handleTCPRevokeMessageResponse(_ response: Im_Protocol_RevokeMessageResponse, sequence: UInt32) {
+        if response.errorCode == .errSuccess {
+            IMLogger.shared.info("✅ Message revoked successfully (seq=\(sequence))")
+        } else {
+            IMLogger.shared.error("❌ Revoke message failed: \(response.errorMsg)")
         }
     }
     
