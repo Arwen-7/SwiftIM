@@ -6,6 +6,7 @@
 //
 
 import UIKit
+import SwiftIM
 
 /// 对话列表 Cell
 class ConversationCell: UITableViewCell {
@@ -114,7 +115,7 @@ class ConversationCell: UITableViewCell {
     
     // MARK: - Configuration
     
-    func configure(name: String, message: String, time: String, unreadCount: Int, avatarURL: String?) {
+    func configure(name: String, message: String, time: String, unreadCount: Int, avatarURL: String?, conversationType: IMConversationType = .single) {
         nameLabel.text = name
         messageLabel.text = message
         timeLabel.text = time
@@ -127,14 +128,21 @@ class ConversationCell: UITableViewCell {
             unreadBadge.isHidden = true
         }
         
-        // 设置头像（这里使用系统图标，实际项目中应该加载网络图片）
-        if let _ = avatarURL, !avatarURL!.isEmpty {
-            // TODO: 加载网络图片
-            avatarImageView.image = UIImage(systemName: "person.circle.fill")
+        // 根据会话类型设置头像
+        if conversationType == .group {
+            // 群聊头像
+            avatarImageView.image = UIImage(systemName: "person.3.fill")
             avatarImageView.tintColor = .systemGray3
         } else {
-            avatarImageView.image = UIImage(systemName: "person.circle.fill")
-            avatarImageView.tintColor = .systemGray3
+            // 单聊头像（这里使用系统图标，实际项目中应该加载网络图片）
+            if let _ = avatarURL, !avatarURL!.isEmpty {
+                // TODO: 加载网络图片
+                avatarImageView.image = UIImage(systemName: "person.circle.fill")
+                avatarImageView.tintColor = .systemGray3
+            } else {
+                avatarImageView.image = UIImage(systemName: "person.circle.fill")
+                avatarImageView.tintColor = .systemGray3
+            }
         }
     }
 }

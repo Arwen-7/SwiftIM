@@ -85,7 +85,8 @@ public final class IMHTTPManager {
             requestHeaders.forEach { headers.add($0) }
         }
         
-        IMLogger.shared.debug("HTTP Request: \(request.method.rawValue) \(url)")
+        IMLogger.shared.info("HTTP Request: \(request.method.rawValue) \(url)")
+        IMLogger.shared.info("HTTP Headers: \(headers.dictionary)")
         
         session.request(
             url,
@@ -98,7 +99,7 @@ public final class IMHTTPManager {
         .responseDecodable(of: IMResponse<T>.self) { response in
             switch response.result {
             case .success(let imResponse):
-                IMLogger.shared.debug("HTTP Response: code=\(imResponse.code), message=\(imResponse.message)")
+                IMLogger.shared.info("HTTP Response: code=\(imResponse.code), message=\(imResponse.message)")
                 completion(.success(imResponse))
                 
             case .failure(let error):
@@ -127,7 +128,7 @@ public final class IMHTTPManager {
     ) {
         let url = baseURL + path
         
-        IMLogger.shared.debug("Upload file: \(url)")
+        IMLogger.shared.info("Upload file: \(url)")
         
         session.upload(
             multipartFormData: { multipartFormData in
@@ -148,7 +149,7 @@ public final class IMHTTPManager {
             switch response.result {
             case .success(let imResponse):
                 if imResponse.isSuccess, let fileURL = imResponse.data {
-                    IMLogger.shared.debug("Upload success: \(fileURL)")
+                    IMLogger.shared.info("Upload success: \(fileURL)")
                     completion(.success(fileURL))
                 } else {
                     completion(.failure(.networkError(imResponse.message)))
@@ -173,7 +174,7 @@ public final class IMHTTPManager {
         progress: ((Double) -> Void)? = nil,
         completion: @escaping (Result<URL, IMError>) -> Void
     ) {
-        IMLogger.shared.debug("Download file: \(url)")
+        IMLogger.shared.info("Download file: \(url)")
         
         let downloadDestination: DownloadRequest.Destination = { _, _ in
             return (destination, [.removePreviousFile, .createIntermediateDirectories])
@@ -188,7 +189,7 @@ public final class IMHTTPManager {
                     IMLogger.shared.error("Download error: \(error)")
                     completion(.failure(self.convertError(error)))
                 } else if let fileURL = response.fileURL {
-                    IMLogger.shared.debug("Download success: \(fileURL)")
+                    IMLogger.shared.info("Download success: \(fileURL)")
                     completion(.success(fileURL))
                 } else {
                     completion(.failure(.networkError("Download failed")))

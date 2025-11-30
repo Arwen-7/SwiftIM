@@ -42,7 +42,7 @@ class SettingsViewController: UIViewController {
     
     private lazy var userIDTextField: UITextField = {
         let textField = UITextField()
-        textField.placeholder = "用户 ID"
+        textField.placeholder = "用户名（也作为密码）"
         textField.borderStyle = .roundedRect
         textField.autocapitalizationType = .none
         textField.autocorrectionType = .no
@@ -52,7 +52,7 @@ class SettingsViewController: UIViewController {
     
     private lazy var tokenTextField: UITextField = {
         let textField = UITextField()
-        textField.placeholder = "Token（可选）"
+        textField.placeholder = "Token（可选，留空自动获取）"
         textField.borderStyle = .roundedRect
         textField.autocapitalizationType = .none
         textField.autocorrectionType = .no
@@ -243,12 +243,11 @@ class SettingsViewController: UIViewController {
     }
     
     @objc private func loginButtonTapped() {
-        guard let userID = userIDTextField.text, !userID.isEmpty else {
-            showAlert(title: "提示", message: "请输入用户 ID")
+        guard let username = userIDTextField.text, !username.isEmpty else {
+            showAlert(title: "提示", message: "请输入用户名")
             return
         }
         
-        let token = tokenTextField.text?.isEmpty == false ? tokenTextField.text! : "demo_token_\(userID)"
         let serverURL = serverURLTextField.text?.isEmpty == false ? serverURLTextField.text! : TalkConfig.imServerURL
         
         // 显示加载指示器
@@ -274,7 +273,79 @@ class SettingsViewController: UIViewController {
             }
         }
         
-        // 登录
+        // 如果有 token，直接使用；否则调用登录 API 获取 token
+        if let token = tokenTextField.text, !token.isEmpty {
+            // 直接使用提供的 token
+            performIMLogin(userID: username, token: token)
+        } else {
+            // 调用 HTTP 登录 API 获取 token（用户名和密码都用 username）
+            fetchTokenViaAPI(username: username, password: username)
+        }
+    }
+    
+    private func fetchTokenViaAPI(username: String, password: String) {
+        let url = URL(string: TalkConfig.apiServerURL + "/api/auth/login")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body = [
+            "username": username,
+            "password": password,
+            "platform": "iOS"
+        ]
+        
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    self?.navigationItem.rightBarButtonItem = nil
+                    self?.loginButton.isEnabled = true
+                    self?.showAlert(title: "登录失败", message: "网络错误: \(error.localizedDescription)")
+                    return
+                }
+                
+                guard let data = data else {
+                    self?.navigationItem.rightBarButtonItem = nil
+                    self?.loginButton.isEnabled = true
+                    self?.showAlert(title: "登录失败", message: "无响应数据")
+                    return
+                }
+                
+                // 解析响应
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let code = json["code"] as? Int else {
+                    self?.navigationItem.rightBarButtonItem = nil
+                    self?.loginButton.isEnabled = true
+                    self?.showAlert(title: "登录失败", message: "响应格式错误")
+                    return
+                }
+                
+                if code != 0 {
+                    let message = json["message"] as? String ?? "未知错误"
+                    self?.navigationItem.rightBarButtonItem = nil
+                    self?.loginButton.isEnabled = true
+                    self?.showAlert(title: "登录失败", message: message)
+                    return
+                }
+                
+                guard let dataDict = json["data"] as? [String: Any],
+                      let token = dataDict["token"] as? String,
+                      let userID = dataDict["userID"] as? String else {
+                    self?.navigationItem.rightBarButtonItem = nil
+                    self?.loginButton.isEnabled = true
+                    self?.showAlert(title: "登录失败", message: "无法获取 token")
+                    return
+                }
+                
+                // 使用获取到的 token 登录 IM
+                self?.performIMLogin(userID: userID, token: token)
+            }
+        }.resume()
+    }
+    
+    private func performIMLogin(userID: String, token: String) {
         IMClient.shared.login(userID: userID, token: token) { [weak self] result in
             DispatchQueue.main.async {
                 self?.navigationItem.rightBarButtonItem = nil

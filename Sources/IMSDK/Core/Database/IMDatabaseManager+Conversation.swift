@@ -485,11 +485,16 @@ extension IMDatabaseManager {
         conversation.conversationType = IMConversationType(rawValue: Int(sqlite3_column_int(statement, 1))) ?? .single
         
         // 根据会话类型设置 targetID 到 userID 或 groupID
-        let targetID = String(cString: sqlite3_column_text(statement, 2))
-        if conversation.conversationType == .single {
-            conversation.userID = targetID
+        if let targetIDPtr = sqlite3_column_text(statement, 2) {
+            let targetID = String(cString: targetIDPtr)
+            if conversation.conversationType == .single {
+                conversation.userID = targetID
+            } else {
+                conversation.groupID = targetID
+            }
         } else {
-            conversation.groupID = targetID
+            // target_id 为 NULL 的情况
+            IMLogger.shared.warning("⚠️ Conversation \(conversation.conversationID) has NULL target_id")
         }
         
         // show_name

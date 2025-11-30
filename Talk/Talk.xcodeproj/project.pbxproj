@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A84607DC2EDC3C7800E93DC6 /* SwiftIM in Frameworks */ = {isa = PBXBuildFile; productRef = A80AE1A61BA62EB74CD3000E526D /* SwiftIM */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		A80AE1552EB74CD3000E526D /* Talk.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Talk.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -36,6 +40,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A84607DC2EDC3C7800E93DC6 /* SwiftIM in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -108,13 +113,13 @@
 			);
 			mainGroup = A80AE14C2EB74CD3000E526D;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A80AE1B5B5B22EB74CD3000E526D /* XCLocalSwiftPackageReference ".." */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A80AE1562EB74CD3000E526D /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-			packageReferences = (
-				A80AE1B5B5B22EB74CD3000E526D /* XCLocalSwiftPackageReference ".." */,
-			);
 			targets = (
 				A80AE1542EB74CD3000E526D /* Talk */,
 			);

@@ -96,7 +96,7 @@ class ConversationListViewController: UIViewController {
         title = "消息"
         navigationController?.navigationBar.prefersLargeTitles = true
         
-        // 添加新建对话按钮
+        // 添加新建对话按钮（支持单聊和群聊）
         let addButton = UIBarButtonItem(
             barButtonSystemItem: .compose,
             target: self,
@@ -158,6 +158,28 @@ class ConversationListViewController: UIViewController {
     @objc private func addConversationTapped() {
         let alert = UIAlertController(
             title: "新建对话",
+            message: "请选择对话类型",
+            preferredStyle: .actionSheet
+        )
+        
+        // 发起单聊
+        alert.addAction(UIAlertAction(title: "发起单聊", style: .default) { [weak self] _ in
+            self?.showCreateSingleChat()
+        })
+        
+        // 创建群聊
+        alert.addAction(UIAlertAction(title: "创建群聊", style: .default) { [weak self] _ in
+            self?.showCreateGroup()
+        })
+        
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        
+        present(alert, animated: true)
+    }
+    
+    private func showCreateSingleChat() {
+        let alert = UIAlertController(
+            title: "发起单聊",
             message: "请输入对方用户 ID",
             preferredStyle: .alert
         )
@@ -173,6 +195,13 @@ class ConversationListViewController: UIViewController {
         })
         
         present(alert, animated: true)
+    }
+    
+    private func showCreateGroup() {
+        let createVC = CreateGroupViewController()
+        createVC.delegate = self
+        let nav = UINavigationController(rootViewController: createVC)
+        present(nav, animated: true)
     }
     
     @objc private func settingsTapped() {
@@ -198,7 +227,11 @@ class ConversationListViewController: UIViewController {
         let conversationID = "single_\(sortedIDs[0])_\(sortedIDs[1])"
         
         // 跳转到聊天页面
-        let chatVC = ChatViewController(conversationID: conversationID, targetUserID: userID)
+        let chatVC = ChatViewController(
+            conversationID: conversationID,
+            conversationType: .single,
+            targetID: userID
+        )
         navigationController?.pushViewController(chatVC, animated: true)
     }
 }
@@ -238,7 +271,8 @@ extension ConversationListViewController: UITableViewDataSource {
             message: messageText,
             time: timeString,
             unreadCount: conversation.unreadCount,
-            avatarURL: conversation.faceURL
+            avatarURL: conversation.faceURL,
+            conversationType: conversation.conversationType
         )
         
         return cell
@@ -253,19 +287,24 @@ extension ConversationListViewController: UITableViewDelegate {
         
         let conversation = conversations[indexPath.row]
         
-        // 获取目标用户 ID
-        let targetUserID: String
+        // 根据会话类型确定 targetID
+        let targetID: String
         if conversation.conversationType == .single {
-            targetUserID = conversation.userID
+            targetID = conversation.userID
+        } else if conversation.conversationType == .group {
+            targetID = conversation.groupID
         } else {
-            targetUserID = conversation.groupID
+            targetID = conversation.userID
         }
         
         // 跳转到聊天页面
         let chatVC = ChatViewController(
             conversationID: conversation.conversationID,
-            targetUserID: targetUserID
+            conversationType: conversation.conversationType,
+            targetID: targetID
         )
+        chatVC.title = conversation.showName.isEmpty ? conversation.conversationID : conversation.showName
+        
         navigationController?.pushViewController(chatVC, animated: true)
     }
     
@@ -341,6 +380,22 @@ extension ConversationListViewController: IMConversationListener {
         DispatchQueue.main.async { [weak self] in
             self?.tabBarItem.badgeValue = count > 0 ? "\(count)" : nil
         }
+    }
+}
+
+// MARK: - CreateGroupDelegate
+
+extension ConversationListViewController: CreateGroupDelegate {
+    func didCreateGroup(_ group: IMGroup) {
+        // 群组创建成功后，直接进入群聊界面
+        let conversationID = "group_\(group.groupID)"
+        let chatVC = ChatViewController(
+            conversationID: conversationID,
+            conversationType: .group,
+            targetID: group.groupID
+        )
+        chatVC.title = group.groupName
+        navigationController?.pushViewController(chatVC, animated: true)
     }
 }
 

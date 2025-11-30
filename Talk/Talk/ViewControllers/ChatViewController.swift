@@ -14,7 +14,8 @@ class ChatViewController: UIViewController {
     // MARK: - Properties
     
     private let conversationID: String
-    private let targetUserID: String
+    private let conversationType: IMConversationType
+    private let targetID: String
     private var messages: [IMMessage] = []
     
     // MARK: - UI Components
@@ -64,9 +65,10 @@ class ChatViewController: UIViewController {
     
     // MARK: - Initialization
     
-    init(conversationID: String, targetUserID: String) {
+    init(conversationID: String, conversationType: IMConversationType, targetID: String) {
         self.conversationID = conversationID
-        self.targetUserID = targetUserID
+        self.conversationType = conversationType
+        self.targetID = targetID
         super.init(nibName: nil, bundle: nil)
     }
     
@@ -146,15 +148,21 @@ class ChatViewController: UIViewController {
     }
     
     private func setupNavigationBar() {
-        title = targetUserID
-        
-        // 加载用户信息并更新标题
-        IMClient.shared.userManager?.getUserInfo(userID: targetUserID, forceUpdate: false) { [weak self] result in
-            if case .success(let user) = result {
-                DispatchQueue.main.async {
-                    self?.title = user.nickname.isEmpty ? user.userID : user.nickname
+        // 根据会话类型设置标题
+        if conversationType == .single {
+            title = targetID
+            
+            // 加载用户信息并更新标题
+            IMClient.shared.userManager?.getUserInfo(userID: targetID, forceUpdate: false) { [weak self] result in
+                if case .success(let user) = result {
+                    DispatchQueue.main.async {
+                        self?.title = user.nickname.isEmpty ? user.userID : user.nickname
+                    }
                 }
             }
+        } else if conversationType == .group {
+            // 群组聊天，标题已经在外部设置
+            // 可以在这里加载群组信息更新标题
         }
     }
     
@@ -197,7 +205,6 @@ class ChatViewController: UIViewController {
         self.tableView.performBatchUpdates(nil) { [weak self] _ in
             self?.scrollToBottom(animated: false)
         }
-        
     }
     
     private func markMessagesAsRead() {
@@ -231,10 +238,12 @@ class ChatViewController: UIViewController {
         
         // 创建并发送消息
         guard let messageManager = IMClient.shared.messageManager else { return }
+        
+        // 根据会话类型创建消息
         let message = messageManager.createTextMessage(
             content: text,
-            to: targetUserID,
-            conversationType: .single
+            to: targetID,
+            conversationType: conversationType
         )
         
         do {

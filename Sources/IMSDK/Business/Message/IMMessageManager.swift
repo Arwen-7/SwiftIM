@@ -559,6 +559,12 @@ public final class IMMessageManager {
     // MARK: - Helper Methods
     
     private func generateConversationID(type: IMConversationType, targetID: String) -> String {
+        // 检查 targetID 是否为空
+        guard !targetID.isEmpty else {
+            IMLogger.shared.error("❌ generateConversationID failed: targetID is empty for type \(type)")
+            return ""
+        }
+        
         switch type {
         case .single:
             // 单聊：排序两个用户 ID（参考 OpenIM: SingleChatType）

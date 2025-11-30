@@ -101,7 +101,7 @@ public final class IMClient {
     // MARK: - Properties
     
     private var config: IMConfig?
-    private var currentUserID: String?
+    public private(set) var currentUserID: String?
     private var currentToken: String?
     private var connectionState: IMConnectionState = .disconnected
     
@@ -544,6 +544,7 @@ public final class IMClient {
         
         // 设置认证 Header
         httpManager.addHeader(name: "Authorization", value: "Bearer \(token)")
+        IMLogger.shared.info("✅ Authorization header set with token: \(token.prefix(10))...")
         
         // 连接 Socket（等待连接成功后调用 completion）
         connectTransport(completion: completion)

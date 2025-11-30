@@ -172,7 +172,12 @@ public final class IMConversationManager {
                 conversation?.groupID = targetID
             }
             
-            IMLogger.shared.info("Creating conversation: \(conversationID) with targetID: \(targetID)")
+            // 检查 targetID 是否为空
+            if targetID.isEmpty {
+                IMLogger.shared.error("❌ Creating conversation with empty targetID! conversationID: \(conversationID), type: \(message.conversationType), message.groupID: \(message.groupID), message.receiverID: \(message.receiverID)")
+            } else {
+                IMLogger.shared.info("✅ Creating conversation: \(conversationID) with targetID: \(targetID), type: \(message.conversationType)")
+            }
         }
         
         guard let conv = conversation else {
